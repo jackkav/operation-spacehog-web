@@ -21,7 +21,7 @@ No converted or re-hosted copies of the game's art or audio are published here.
 Shoot down whole waves to earn power tokens, move the toolbar cursor along SPEED → ADD-ON and activate what you want.
 
 ## Status
-Playable end to end (6 levels, pickups, the full upgrade bar, three craft with specials). Still missing: boss fights, two players, music.
+Playable end to end (6 levels, guardian fights, pickups, the full upgrade bar, three craft with specials). Still missing: two players, music.
 Several behaviours are approximations of the original; see [NOTES.md](NOTES.md) for the reverse-engineered formats and a list of what is guessed.
 
 ## Development

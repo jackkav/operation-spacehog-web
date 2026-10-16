@@ -172,7 +172,7 @@ function decodeSample(d) {
 }
 
 // --- levels ----------------------------------------------------------------------------------------------------------
-const CMD = { 0: 'spawn', 1: 'formation', 2: 'cluster', 3: 'spawn_attached', 4: 'spawn_attached', 5: 'scenery', 6: 'spawn_attached', 9: 'end_script' };
+const CMD = { 0: 'spawn', 1: 'formation', 2: 'cluster', 3: 'spawn_alt', 4: 'spawn_alt', 5: 'scenery', 6: 'guardian', 9: 'end_script' };
 
 function decodePath(d) {
   const dv = new DataView(d.buffer, d.byteOffset, d.byteLength), pts = [];

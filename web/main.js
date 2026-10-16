@@ -1,6 +1,7 @@
 import { Sim, SHIPS, SLOTS, W, H, PLAY_H, CHARGE_MIN } from './sim.js';
 import { loadGame } from './loader.js';
 
+const VOLUME = 0.07;                  // master volume for all sounds (was 0.35; now 20% of that)
 const FPS = 60;                       // assumed: 320x240 VGA mode runs at 60 Hz (original frame limiter not decoded)
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
@@ -28,7 +29,7 @@ function initAudio() {
 function play(n) {
   if (!ac || !buffers[n]) return;
   const s = ac.createBufferSource(); s.buffer = buffers[n];
-  const g = ac.createGain(); g.gain.value = 0.35; s.connect(g).connect(ac.destination); s.start();
+  const g = ac.createGain(); g.gain.value = VOLUME; s.connect(g).connect(ac.destination); s.start();
 }
 
 // --- input ------------------------------------------------------------------------------------------------------
@@ -117,10 +118,16 @@ function render() {
     if (sim.berserk > 0 && sim.frame % 4 < 2) { ctx.fillStyle = 'rgba(255,60,20,0.35)'; ctx.fillRect(Math.round(p.x - p.w / 2), Math.round(p.y - p.h / 2), p.w, p.h); }
     if (p.charge > 4) { ctx.fillStyle = p.charge >= CHARGE_MIN ? '#8f8' : '#486'; ctx.fillRect(Math.round(p.x - 10), Math.round(p.y + p.h / 2 + 2), Math.min(20, p.charge * 20 / CHARGE_MIN), 2); }
   }
-  for (const f of sim.fx) drawC(f.frames[Math.min(f.frames.length - 1, Math.floor(f.t / f.speed))], f.x, f.y);
+  for (const f of sim.fx) if (f.t >= 0) drawC(f.frames[Math.min(f.frames.length - 1, Math.floor(f.t / f.speed))], f.x, f.y);
   if (sim.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${sim.flash / 14})`; ctx.fillRect(0, 0, W, PLAY_H); }
   ctx.drawImage(img.TOOLBAR, 1, PLAY_H);
   drawBar();
+  const boss = sim.bossStatus();
+  if (boss) {                                                        // guardian energy bar
+    ctx.fillStyle = '#400'; ctx.fillRect(80, 22, 160, 4);
+    ctx.fillStyle = '#f33'; ctx.fillRect(80, 22, Math.round(160 * boss.hp / boss.max), 4);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(79.5, 21.5, 161, 5);
+  }
   text('SCORE ' + String(sim.score).padStart(7, '0'), 6, 9, '#fff');
   text('SHIPS ' + Math.max(0, sim.lives), W / 2, 9, '#fff', 'center');
   text('LVL ' + (sim.levelNo + 1), W - 6, 9, '#fff', 'right');

@@ -1,3 +1,4 @@
 node_modules/
 web/assets/
 .DS_Store
+__pycache__/

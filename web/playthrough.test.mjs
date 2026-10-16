@@ -9,10 +9,11 @@ import { Sim, SLOTS } from './sim.js';
 test('a bot can play every level of the real game to the end, and pickups/upgrades are exercised', async () => {
   const g = await loadGame(fs.readFileSync(fileURLToPath(new URL('spacehog.zip', import.meta.url))));
   const sim = new Sim(g.data); sim.newGame(1);
-  let tokens = 0, upgrades = 0, frames = 0;
+  let tokens = 0, upgrades = 0, frames = 0; const bossLevels = [];
   for (let L = 0; L < 6; L++) {
     sim.begin();
     for (let f = 0; sim.state === 'playing' && f < 30000; f++, frames++) {
+      if (sim.bossStatus() && !bossLevels.includes(L + 1)) bossLevels.push(L + 1);
       const p = sim.player; let tgt = null, grab = null;
       for (const e of sim.enemies) if (e.hp < 9000 && !e.meteor && e.x > p.x && (!tgt || e.x < tgt.x)) tgt = e;
       for (const pk of sim.pickups) if (!grab || pk.x < grab.x) grab = pk;
@@ -27,6 +28,7 @@ test('a bot can play every level of the real game to the end, and pickups/upgrad
     if (sim.state === 'levelclear') sim.nextLevel();
   }
   assert.equal(sim.state, 'won');
+  assert.deepEqual(bossLevels, [3, 6], 'guardians appear (and get beaten) in the convoy and final levels');
   assert.ok(tokens > 5, 'bot collected power tokens: ' + tokens);
   assert.ok(upgrades > 3, 'bot activated upgrades: ' + upgrades);
   assert.ok(SLOTS.every((s) => sim.w[s] >= 0));

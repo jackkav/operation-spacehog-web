@@ -40,9 +40,16 @@ Event (16 x int32; unused fields hold defaults 1/5/10, so constant columns are f
 Commands (jump table at 0x1C728, handlers in `SH.EXE`): `0` spawn enemy `type` (enemy table index) with velocity;
 `1` **formation**: emitter spawns `f7` ships of `type` every `f8` frames at y=`f2` following path `PAT_<f6>`;
 `2` cluster/rotor group (`f9`,`f10` = angle in 1/256 turns, `f11` ...; semantics partly unknown);
-`3,4,6` spawn enemy linked to the previously spawned object (turret on carrier etc.);
-`5` **scenery**: `type` = index into SHBGS BG01..BG12, `f5` = layer; `9` sets the "script finished" flag.
-Last event of every level is `cmd 9`; LEV_03/05/06 also have an earlier one.
+`3,4` spawn variants (extra fields unknown; handled as plain spawns);
+`5` **scenery**: `type` = index into SHBGS BG01..BG12, `f5` = layer;
+`6` **guardian (boss)**: follows `GPAT_<f6>` (the exe indexes the SHLEV datafile with f6), y = `f2` + path y; the path loops while the boss lives;
+`9` sets the "script finished" flag - **the first one ends the script** (later events, e.g. the trailing record in levels 3/5/6, never run).
+Link field `f14`: `0` = this spawn becomes the *parent* of the spawns that follow; `-2` = this spawn is a *part* of the last parent, placed at
+parent centre + (`f12`, `f13`) (turrets, engine flames, Octo's mask ...). A part dies with its parent. Bonus `f15 = 99` = does not count.
+Boss layouts seen: level 3 = Freighter (GUARD1 356x58) with 5 turrets, a side turret and two engine flames; level 6 = invisible `hitarea` parent on GPAT_02
+carrying Octo's ship, mask, turret, side turret and engine flame. Enemy hp is multiplied by the difficulty setting at spawn (`[0x73ACC]`, not applied here).
+The main loop advances level time only while the pending-event counter `[0xC052C]` is 0; this is not modelled (our timer always runs).
+Last event of every level is `cmd 9`.
 
 **Enemy type table** (36 x 148 bytes at 0xC8FD0, built by init code at 0x1AD0-0x2A0C): name (+0x7D), sprite index into SPACEHOG.DAT (+0x24),
 hp (+0x20; Big Meteor 9999 = indestructible, matches README), score (+0x34), gun offset (+0x48,+0x4C), reload (+0x50), bullet (+0x58), flags (+0x5C/+0x5D). `tools/levels.py` exports it.
@@ -54,7 +61,7 @@ x starts ~350 (just right of the 320-px screen) and decreases; y is relative to 
 
 ## Not yet decoded
 - Exact semantics of cmd 2/3/4/6 extra fields (f9-f13), enemy table fields +0x28/+0x2C/+0x5C/+0x74.
-- How guardians (GPAT) are triggered (probably a cmd 9 / `type` field), the FONT format.
+- Boss attack patterns/phases (if any), the FONT format, what the final cmd 9 `type` field (e.g. 2 in level 5) means.
 - All gameplay logic (weapons, AI, collision, lighting) lives only in `SH.EXE`.
 - Disassembly workflow: unpack (tools/exetables.py `unpack_exe`) -> `objdump -d --triple=i386-pc-win32 -M intel` works on the unpacked COFF.
 
@@ -77,7 +84,7 @@ python3 -m http.server 8765 -d web          # then open http://localhost:8765
 `web/spacehog.zip` is the author's unmodified `spacehog.zip` (SHA-256 a620d38f6e75e8e85baa41f5b5693423e14f3b5d6013aeb0323989ef63f7398d).
 Controls: Left/Right + Enter to pick a craft; arrows move, Space/Ctrl/Z fire (hold to charge with BUILDUP), C/Shift/Alt activates the highlighted upgrade, X = craft special.
 
-Implemented: title/craft select, level briefings, all 6 levels from the decoded scripts, formations/paths/scenery, enemy animation, hp/score from the enemy table,
+Implemented: guardian fights (levels 3 and 6: path-following parents with attached turrets/flames, energy bar, chain explosion), title/craft select, level briefings, all 6 levels from the decoded scripts, formations/paths/scenery, enemy animation, hp/score from the enemy table,
 enemy fire (aimed or straight, by bullet type) from gun offsets, **pickups** (P token, S special, +1 ship) dropped when a whole wave is destroyed or a bonus-carrying enemy dies,
 the **upgrade bar** (SPEED GUN SIDE BUILDUP MISSILE PLASMA MAGMA OPTION ADD-ON, LOCK at the end of the bar, death penalty), meteors that only magma/missiles/specials hurt,
 and the three craft specials (Berserk, Hellriders, Fireworks). A scripted bot clears all 6 levels in the tests.
@@ -85,6 +92,6 @@ and the three craft specials (Berserk, Hellriders, Fireworks). A scripted bot cl
 **Approximations / not yet implemented** (marked `approx` in sim.js):
 - Frame rate assumed 60 Hz; sprite anchors assumed to be centres; playfield assumed 320x229 above the 11-px toolbar.
 - cmd 2 (cluster), 3, 4, 6 are spawned as plain enemies (their extra fields are unknown); vx = vy = 0 enemies drift left at 0.7 px/frame.
-- Scenery speed by layer is a guess; early cmd 9 markers are ignored; guardians/bosses (GPAT, final cmd 9 types) are not spawned.
+- Scenery speed by layer is a guess; boss attack patterns and hp scaling are not decoded (bosses just fire their parts' normal guns).
 - Pickup kinds per bonus code (1 = P, 2 = S, 3 = +1) and all weapon numbers (damage, rates, caps) are tuned by feel, not decoded from SH.EXE.
-- Missing: boss fights, 2 players, music (MIDI exported by the Python tools but unused), enemy lighting effects, hall of fame, options menu.
+- Missing: 2 players, music (MIDI exported by the Python tools but unused), enemy lighting effects, hall of fame, options menu.

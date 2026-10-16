@@ -9,7 +9,7 @@ from aldat import parse
 from exetables import unpack_exe, enemy_table
 from extract import PASSWORD
 
-CMD = {0: 'spawn', 1: 'formation', 2: 'cluster', 3: 'spawn_attached', 4: 'spawn_attached', 5: 'scenery', 6: 'spawn_attached', 9: 'end_script'}   # 9 sets the 'script finished' flag (0xC0530); some levels have an earlier one
+CMD = {0: 'spawn', 1: 'formation', 2: 'cluster', 3: 'spawn_alt', 4: 'spawn_alt', 5: 'scenery', 6: 'guardian', 9: 'end_script'}   # 9 sets the 'script finished' flag (0xC0530); the first one ends the script
 FIELD_NAMES = {   # only fields whose meaning was confirmed in the exe or by data; others stay raw in 'raw'
     0: 'time', 1: 'packed', 2: 'y', 3: 'x_offset', 4: 'vx', 5: 'vy', 14: 'link', 15: 'bonus',
 }

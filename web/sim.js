@@ -58,7 +58,7 @@ export class Sim {
     this.level = this.data.levels[n];
     this.frame = 0; this.levelTime = 0; this.evIdx = 0; this.finishedFlag = false;
     this.enemies = []; this.bullets = []; this.ebullets = []; this.fx = []; this.scenery = []; this.emitters = [];
-    this.pickups = []; this.beams = []; this.trail = []; this.groups = new Set(); this.missileCd = 0; this.berserk = 0;
+    this.pickups = []; this.beams = []; this.trail = []; this.groups = new Set(); this.parent = null; this.missileCd = 0; this.berserk = 0;
     const [pw, ph] = this.size(this.ship.sprite);
     this.player = { x: 40, y: 115, w: pw, h: ph, cd: 0, inv: 90, dead: 0, charge: 0 };
     this.prev = { fire: false, select: false, special: false };
@@ -76,11 +76,21 @@ export class Sim {
   exec(e) {
     const bonus = e.bonus > 0 && e.bonus < 99 ? e.bonus : 0;          // 99 = "does not count"
     switch (e.cmd_id) {
-      case 0: case 3: case 4: case 6: case 2: {     // approx: attached/cluster variants are spawned as plain enemies
+      case 0: case 3: case 4: case 6: case 2: {     // approx: cluster / "attached" variants (2, 3, 4) spawn as plain enemies
         const def = this.defs.get(e.type); if (!def) break;
+        const raw = e.raw || [], link = raw[14];                  // link: 0 = becomes the parent of what follows, -2 = attached to it
         const [w] = this.frameSize(def, 0);
-        const en = this.spawn(def, W + w + (e.x_offset ?? 0), e.y, e.vx ?? -1, e.vy ?? 0);
+        let en;
+        if (e.cmd_id === 6) {                                      // guardian: follows GPAT_<f6>, y = f2 + path y, loops until killed
+          const path = this.paths['GPAT_' + String(raw[6]).padStart(2, '0')];
+          en = this.spawn(def, path ? path[0].x : W + w, e.y + (path ? path[0].y : 0), 0, 0, path || null);
+          en.boss = true; en.loop = true; en.maxHp = en.hp;
+        } else if (link === -2 && this.parent && !this.parent.dead) {   // part of the parent (turrets, engine flames, ...)
+          en = this.spawn(def, this.parent.x + raw[12], this.parent.y + raw[13], 0, 0);
+          en.parent = this.parent; en.off = [raw[12], raw[13]]; this.parent.children.push(en);
+        } else en = this.spawn(def, W + w + (e.x_offset ?? 0), e.y, e.vx ?? -1, e.vy ?? 0);
         en.bonus = bonus;                           // dropped when this enemy is shot down
+        if (link === 0 || e.cmd_id === 6) this.parent = en;
         break;
       }
       case 1: {
@@ -99,7 +109,7 @@ export class Sim {
         this.scenery.push({ idx: e.type, x: W + bg.w / 2 + (e.x_offset ?? 0), y: e.y, w: bg.w, h: bg.h, vx: -speed });
         break;
       }
-      case 9: if (this.evIdx >= this.level.events.length) this.finishedFlag = true; break;   // approx: ignore early markers
+      case 9: this.finishedFlag = true; this.evIdx = this.level.events.length; break;   // first end marker stops the script (exe: sets 0xC0530)
     }
   }
 
@@ -120,6 +130,8 @@ export class Sim {
       reload: (f['0x50'] || 0) * 2, cd: 30 + Math.floor(this.rand() * 60),
       gun: [f['0x48'] || 0, f['0x4c'] || 0], bullet: f['0x58'] || 0,
       meteor: /^(Meteor|Halfmeteor)/.test(def.name || ''),    // README: meteors only die to magma or missiles
+      decor: /^Engineflame/.test(def.name || ''),             // engine flames: scenery on a parent, not a target
+      children: [], parent: null, boss: false, loop: false,
     };
     if (group) group.alive++;
     this.enemies.push(en);
@@ -269,14 +281,18 @@ export class Sim {
   updateEnemies() {
     const p = this.player;
     for (const en of this.enemies) {
+      if (en.dead) continue;
       en.age++;
-      if (en.path) {
-        const pt = en.path[en.pi++];
+      if (en.parent) {                                  // attached part: rides on its parent
+        en.x = en.parent.x + en.off[0]; en.y = en.parent.y + en.off[1];
+      } else if (en.path) {
+        let pt = en.path[en.pi++];
+        if (!pt && en.loop) { en.pi = 0; pt = en.path[en.pi++]; }
         if (!pt) { this.escape(en); continue; }
         en.x = pt.x; en.y = en.baseY + pt.y;
       } else { en.x += en.vx; en.y += en.vy; }
       if (en.frames > 1 && en.age % 6 === 0) en.frame = (en.frame + 1) % en.frames;
-      if (en.x < -90 || en.x > 700 || en.y < -200 || en.y > 520) { this.escape(en); continue; }
+      if (!en.parent && !en.boss && (en.x < -90 || en.x > 700 || en.y < -200 || en.y > 520)) { this.escape(en); continue; }
       // approx: enemies with a reload value shoot while on screen; bullet types 0-3 are aimed, type 4 flies straight left
       if (en.reload > 0 && en.x > 24 && en.x < W - 8 && --en.cd <= 0) {
         en.cd = en.reload;
@@ -286,13 +302,14 @@ export class Sim {
         if (en.bullet < 4) { const dx = p.x - gx, dy = p.y - gy, d = Math.hypot(dx, dy) || 1; vx = dx / d * 2.2; vy = dy / d * 2.2; }
         this.ebullets.push({ x: gx, y: gy, w: bw, h: bh, vx, vy, spr });
       }
-      if (p.dead === 0 && p.inv === 0 && rectsHit(p, en, 4)) this.killPlayer();
+      if (!en.decor && p.dead === 0 && p.inv === 0 && rectsHit(p, en, 4)) this.killPlayer();
     }
     this.enemies = this.enemies.filter(e => !e.dead);
   }
 
   escape(en) {                         // left the field alive: breaks a wave's bonus
     en.dead = true;
+    for (const c of en.children) c.dead = true;
     if (en.group) { en.group.alive--; en.group.broken = true; }
   }
 
@@ -303,7 +320,7 @@ export class Sim {
       b.x += b.vx; b.y += b.vy;
       if (b.x > W + 40 || b.x < -40 || b.y < -40 || b.y > H + 40) { b.dead = true; continue; }
       for (const en of this.enemies) {
-        if (en.dead || b.hit.has(en) || !rectsHit(b, en, 1)) continue;
+        if (en.dead || en.decor || b.hit.has(en) || !rectsHit(b, en, 1)) continue;
         b.hit.add(en);
         this.hurt(en, b.dmg, b.src);
         this.fx.push({ x: b.x + b.w / 2, y: b.y, frames: ['IHIT1', 'IHIT2', 'IHIT3'], speed: 2, t: 0 });
@@ -350,7 +367,7 @@ export class Sim {
 
   // damage routing: returns true when the enemy took damage
   hurt(en, dmg, src) {
-    if (en.dead || en.hp >= 9000) return false;                      // 9999 hp = indestructible obstacle (Big Meteor)
+    if (en.dead || en.decor || en.hp >= 9000) return false;          // 9999 hp = indestructible obstacle (Big Meteor)
     if (en.meteor && (src === 'gun' || src === 'side')) return false;
     en.hp -= dmg;
     if (en.hp <= 0) this.killEnemy(en);
@@ -364,6 +381,17 @@ export class Sim {
     this.sfx.push(['SND_EXP1', 'SND_EXP2', 'SND_EXP3'][Math.floor(this.rand() * 3)]);
     if (en.group) { en.group.alive--; en.group.last = { x: en.x, y: en.y }; }
     else if (en.bonus) this.drop(en.bonus, en.x, en.y);
+    for (const c of en.children) if (!c.dead) this.killEnemy(c);      // a destroyed parent takes its parts with it
+    if (en.boss) {                                                     // guardian down: big explosion
+      this.flash = 8;
+      for (let i = 0; i < 8; i++) this.fx.push({ x: en.x + (this.rand() - 0.5) * en.w, y: en.y + (this.rand() - 0.5) * en.h, frames: ['MHIT1', 'MHIT2', 'MHIT3'], speed: 4, t: -i * 5 });
+      this.sfx.push('SND_EXP3');
+    }
+  }
+
+  bossStatus() {                       // for the energy bar: the live guardian, if any
+    const b = this.enemies.find(e => e.boss && !e.dead);
+    return b ? { hp: Math.max(0, b.hp), max: b.maxHp } : null;
   }
 
   checkGroups() {                      // a wave wiped out completely (nobody escaped) rewards a pickup
