@@ -30,7 +30,7 @@ jobs:
       - name: Assemble site (game files only, no tests)
         run: |
           mkdir _site
-          cp web/index.html web/main.js web/sim.js web/loader.js web/spacehog.zip _site/
+          cp web/index.html web/*.js web/spacehog.zip _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

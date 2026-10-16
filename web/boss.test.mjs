@@ -85,3 +85,55 @@ test('a part with no parent (should not happen in real data) spawns as a plain e
   const sim = field(mkB([part(10, 10)]));
   assert.equal(sim.enemies.length, 1); assert.equal(sim.enemies[0].parent, null);
 });
+
+// --- attack patterns ---------------------------------------------------------------------------------------------------
+const PE = [enemy(0, 3, 1, 50), named(enemy(10, 6, 40, 1000), 'Freighter'), named(enemy(11, 6, 40, 1000), 'hitarea')];
+const mkP = (type) => {
+  const sim = mk([ev({ cmd_id: 6, type, y: 100, raw: raw(1, 0, 0, 0, 99), bonus: 99 }), ev({ t: 999, cmd_id: 9 })],
+    { enemies: PE, sprites: SPR, paths: { GPAT_01: [[250, 0], [250, 0]] } });          // parked at x = 250 (loops)
+  start(sim); sim.player.inv = 99999; sim.player.x = 40; sim.player.y = 115;
+  return [sim, sim.enemies[0]];
+};
+const stepTo = (sim, b, age) => { while (b.age < age) sim.step({}); };
+
+test('boss phase follows remaining health: none-attacks, then fan, then fan + ring', () => {
+  const [sim, b] = mkP(10);
+  assert.equal(sim.bossPhase(b), 0); b.hp = 20; assert.equal(sim.bossPhase(b), 1); b.hp = 5; assert.equal(sim.bossPhase(b), 2);
+  b.hp = 40; stepTo(sim, b, 600); assert.equal(sim.ebullets.length, 0, 'full-health Freighter only uses its turrets');
+});
+
+test('fan: n bullets from the boss front, centred on the player, at the pattern speed', () => {
+  const [sim, b] = mkP(10); b.hp = 20; stepTo(sim, b, 140);
+  const bs = sim.ebullets; assert.equal(bs.length, 5);
+  const mid = bs[2], aim = Math.atan2(sim.player.y - mid.y, sim.player.x - mid.x);
+  assert.ok(Math.abs(Math.atan2(mid.vy, mid.vx) - aim) < 0.03, 'centre bullet aims at the player');
+  assert.ok(Math.abs(Math.hypot(mid.vx, mid.vy) - 2.0) < 1e-9);
+  assert.ok(Math.abs(bs[0].x - (b.x - 150)) < 6, 'fired from the front (-x side)');
+  let d = Math.atan2(bs[0].vy, bs[0].vx) - Math.atan2(bs[4].vy, bs[4].vx); d = Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));   // wrap to (-pi, pi]
+  assert.ok(Math.abs(d - 0.7) < 0.05, 'fan spans `spread` radians');
+});
+
+test('ring: n bullets evenly all round, so their velocities cancel out', () => {
+  const [sim, b] = mkP(10); b.hp = 5; stepTo(sim, b, 170);
+  const rings = sim.ebullets.filter((e) => Math.abs(Math.hypot(e.vx, e.vy) - 1.5) < 1e-9); assert.equal(rings.length, 12);
+  assert.ok(Math.abs(rings.reduce((a, e) => a + e.vx, 0)) < 1e-6 && Math.abs(rings.reduce((a, e) => a + e.vy, 0)) < 1e-6);
+});
+
+test('spiral (Octo, last phase): `arms` bullets on a rotating angle every `every` frames', () => {
+  const [sim, b] = mkP(11); b.hp = 10; stepTo(sim, b, 12);
+  const spiral = sim.ebullets.filter((e) => Math.abs(Math.hypot(e.vx, e.vy) - 1.8) < 1e-9);
+  assert.equal(spiral.length, 6, 'frames 6 and 12, 3 arms each');
+  const a6 = Math.atan2(spiral[0].vy, spiral[0].vx), a12 = Math.atan2(spiral[3].vy, spiral[3].vx);
+  const turn = (((a12 - a6) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  assert.ok(Math.abs(turn - 6 * 0.35) < 1e-6, 'the arms rotate by `step` rad per frame');
+});
+
+test('bosses only shoot while their muzzle is on screen, never exceed the bullet cap, and announce phase changes', () => {
+  const [sim, b] = mkP(10); b.hp = 20;
+  sim.player.inv = 99999; b.path = [[900, 0]].map(([x, y]) => ({ x, y })); b.pi = 0; stepTo(sim, b, 280);
+  assert.equal(sim.ebullets.length, 0, 'muzzle off screen');
+  const [s2, b2] = mkP(10); b2.hp = 5; s2.ebullets = Array.from({ length: 150 }, () => ({ x: 999, y: 999, w: 1, h: 1, vx: 0, vy: 0 }));
+  stepTo(s2, b2, 170); assert.ok(s2.ebullets.length <= 150 + 0, 'cap respected');
+  const [s3, b3] = mkP(10); stepTo(s3, b3, 3); s3.sfx.length = 0; b3.hp = 15; s3.step({});
+  assert.ok(s3.sfx.includes('SND_EXP3') && s3.flash > 0, 'phase change is announced');
+});

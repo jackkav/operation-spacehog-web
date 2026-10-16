@@ -137,6 +137,18 @@ export function enemyTable(img) {
   return { fields, names };
 }
 
+// The ten default hall-of-fame names are consecutive C strings in SH.EXE, starting with "Free Lunch Design".
+export function defaultHallNames(img) {
+  const key = new TextEncoder().encode('Free Lunch Design\0Maximillian Drake\0');
+  outer: for (let i = 0; i < img.length - key.length; i++) {
+    for (let k = 0; k < key.length; k++) if (img[i + k] !== key[k]) continue outer;
+    const out = []; let p = i;
+    for (let n = 0; n < 10; n++) { const s = cstr(img.subarray(p)); out.push(s); p += s.length + 1; }
+    return out;
+  }
+  return [];
+}
+
 // --- bitmaps / sound -------------------------------------------------------------------------------------------------
 function readPal(d) {
   return Array.from({ length: 256 }, (_, i) => [0, 1, 2].map((k) => (d[i * 4 + k] << 2) | (d[i * 4 + k] >> 4)));
@@ -169,6 +181,17 @@ function decodeSample(d) {
   if (bits === 8) for (let i = 0; i < len; i++) f[i] = (d[8 + i] - 128) / 128;
   else for (let i = 0; i < len; i++) f[i] = (dv.getUint16(8 + i * 2, true) - 32768) / 32768;
   return { freq, samples: f };
+}
+
+// Allegro stores MIDI as: u16 division, then 16 x (u32 length + track bytes). Rebuild a standard MIDI file (format 1).
+export function toSMF(d) {
+  const dv = new DataView(d.buffer, d.byteOffset, d.byteLength), tracks = []; let p = 2;
+  for (let i = 0; i < 16; i++) { const n = dv.getUint32(p); p += 4; if (n) tracks.push(d.subarray(p, p + n)); p += n; }
+  const out = new Uint8Array(14 + tracks.reduce((a, t) => a + 8 + t.length, 0)), o = new DataView(out.buffer);
+  out.set([0x4d, 0x54, 0x68, 0x64], 0); o.setUint32(4, 6); o.setUint16(8, 1); o.setUint16(10, tracks.length); o.setUint16(12, dv.getUint16(0));
+  let q = 14;
+  for (const t of tracks) { out.set([0x4d, 0x54, 0x72, 0x6b], q); o.setUint32(q + 4, t.length); out.set(t, q + 8); q += 8 + t.length; }
+  return out;
 }
 
 // --- levels ----------------------------------------------------------------------------------------------------------
@@ -221,8 +244,12 @@ export async function loadGame(zipBytes) {
     const im = decodeBitmap(o, pal); bgImages[bgs.indexOf(o)] = im; return { name: o.name, w: im.w, h: im.h };
   });
   for (const o of snd) if (o.type === 'SAMP') samples.set(o.name, decodeSample(o.data));
+  const midis = new Map(snd.filter((o) => o.type === 'MIDI').map((o) => [o.name, toSMF(o.data)]));
 
-  const { fields, names } = enemyTable(unpackExe(files['SH.EXE']));
+  const exe = unpackExe(files['SH.EXE']);
+  const { fields, names } = enemyTable(exe);
+  const hallNames = defaultHallNames(exe);
+  const texts = Object.fromEntries(main.filter((o) => o.type === 'DATA').map((o) => [o.name, latin1(o.data)]));
   const enemies = [...new Set([...fields.keys(), ...names.keys()])].sort((a, b) => a - b).map((t) => {
     const f = fields.get(t) ?? {}, sp = f[0x24];
     return {
@@ -243,6 +270,6 @@ export async function loadGame(zipBytes) {
 
   return {
     data: { enemies, levels, paths, sprites, bgs: bgList, sounds: [...samples.keys()] },
-    images, bgImages, samples,
+    images, bgImages, samples, midis, hallNames, texts,
   };
 }

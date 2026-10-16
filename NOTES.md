@@ -72,26 +72,46 @@ python3 tools/levels.py  <dir with SH.EXE + .DAT files> <levels.json>   # levels
 ```
 Extracted assets are gitignored (`spacehog-web/extracted/`, `spacehog-web/original/`).
 
+## More facts from SH.EXE / the data files
+- **Difficulty**: the options menu lists PRACTICE, EASY, NORMAL, TOUGH, HARD, INSANE (setting 1..6, stored at `[0x73ACC]`). At spawn the exe multiplies enemy hp by the
+  setting and the score by setting / 2. After level 3, settings <= 2 jump straight to the final level (message: "Practice and easy mode hold only 3 levels").
+  The default setting is not known; the port defaults to NORMAL (3).
+- **Hall of fame**: ten default pilots are consecutive C strings in the exe (Free Lunch Design, Maximillian Drake, Sheila Longhart, Billy 68, Kraven Drax, Shay Prumble,
+  Brock Vixel, Maxim Friggot, Leloo Takenoo, Hantor Capole), scoring 50000 down to 5000 in steps of 5000 (scores taken from the `.SAV` in the DOS Games Archive build).
+- **Title menu / options strings** (from the exe): "1 PLAYER GAME", "2 PLAYER GAME", OPTIONS, HALL OF FAME, CREDITS, EXIT; option rows Players, Level, Ply 1/Ply 2 controls,
+  Set Graphics, Music vol, SFX vol.
+- **MIDI**: SHSND.DAT `MIDI` objects are `u16 division` + 16 x (`u32 length` + raw track bytes); prefixing `MThd`/`MTrk` headers gives a format-1 SMF (`loader.js toSMF`).
+  Songs: MIDI_TITLE (140 s), MIDI_INTRO (49 s), MIDI_LEVEL (86 s, opens with 20 s of drums only), MIDI_BOSS (40 s).
+- **CREDIT_TEXT**: inline codes `\n` end of line, `\1`..`\7` colour, `\c` centre, `\l` large, `\s` small, `\e` end (parsed by `extras.js parseCredits`).
+
 ## Web port (`web/`)
 Vanilla JS, no build step. `loader.js` unzips the original `spacehog.zip` and decodes everything in the browser (port of `tools/*.py`),
-`sim.js` = DOM-free simulation, `main.js` = canvas 320x240 renderer, input, Web Audio, `index.html`.
+`sim.js` = DOM-free simulation, `midi.js` = MIDI player (SMF parser, sequencer, Web Audio synth), `extras.js` = options / hall of fame / credits logic,
+`main.js` = canvas 320x240 renderer, screens, input, audio wiring, `index.html`.
 
 ```
-node --test web/*.test.mjs                  # simulation, weapons, full-playthrough tests (loader tests also compare with the Python tools if assets are built)
+node --test web/*.test.mjs                  # simulation, weapons, bosses, co-op, MIDI, persistence, full-playthrough tests
 unzip web/spacehog.zip -d /tmp/sh && python3 tools/build_web.py /tmp/sh web   # optional: Python export (web/assets, gitignored) used only to cross-check loader.js
 python3 -m http.server 8765 -d web          # then open http://localhost:8765
 ```
 `web/spacehog.zip` is the author's unmodified `spacehog.zip` (SHA-256 a620d38f6e75e8e85baa41f5b5693423e14f3b5d6013aeb0323989ef63f7398d).
-Controls: Left/Right + Enter to pick a craft; arrows move, Space/Ctrl/Z fire (hold to charge with BUILDUP), C/Shift/Alt activates the highlighted upgrade, X = craft special.
 
-Implemented: guardian fights (levels 3 and 6: path-following parents with attached turrets/flames, energy bar, chain explosion), title/craft select, level briefings, all 6 levels from the decoded scripts, formations/paths/scenery, enemy animation, hp/score from the enemy table,
-enemy fire (aimed or straight, by bullet type) from gun offsets, **pickups** (P token, S special, +1 ship) dropped when a whole wave is destroyed or a bonus-carrying enemy dies,
-the **upgrade bar** (SPEED GUN SIDE BUILDUP MISSILE PLASMA MAGMA OPTION ADD-ON, LOCK at the end of the bar, death penalty), meteors that only magma/missiles/specials hurt,
-and the three craft specials (Berserk, Hellriders, Fireworks). A scripted bot clears all 6 levels in the tests.
+Controls - P1: arrows move, Space/Ctrl/Z fire (hold to charge with BUILDUP), C/Shift/Alt activate the highlighted upgrade, X craft special.
+P2: WASD move, H fire, J upgrade, K special. P / Esc pause (Q quits to the menu). Menus: arrows + Enter.
+
+Implemented: title menu (1/2 players, options, hall of fame, credits), craft select, level briefings, all 6 levels from the decoded scripts, formations/paths/scenery,
+enemy animation, hp/score from the enemy table, difficulty (hp and score scaling, easy/practice shortcut), enemy fire from gun offsets, **pickups**, the **upgrade bar**
+(LOCK, death penalty), meteors only hurt by magma/missiles/specials, the three craft specials, **guardian fights** (levels 3 and 6: path-following parents with attached
+turrets/flames, energy bar, **phase-based attack patterns**, chain explosion), **two-player co-op** (own weapons/lives/score each, shared pickups, steal a ship with your
+special key when out), **music** (the four original MIDI songs through the built-in synth, switching for title / briefing / level / boss, per-song loudness normalised),
+**hall of fame** with name entry (persisted in localStorage), **options** (music on/off + volume, SFX volume, difficulty, lighting; persisted), original **credits** roll,
+additive **lighting** glows. A scripted bot clears all 6 levels alone and in co-op in the tests.
 
 **Approximations / not yet implemented** (marked `approx` in sim.js):
-- Frame rate assumed 60 Hz; sprite anchors assumed to be centres; playfield assumed 320x229 above the 11-px toolbar.
-- cmd 2 (cluster), 3, 4, 6 are spawned as plain enemies (their extra fields are unknown); vx = vy = 0 enemies drift left at 0.7 px/frame.
-- Scenery speed by layer is a guess; boss attack patterns and hp scaling are not decoded (bosses just fire their parts' normal guns).
+- Frame rate assumed 60 Hz; sprite anchors assumed to be centres; playfield assumed 320x229 above the 11-px toolbar; big sprites use a shrunk ram hit box (original: pixel-perfect).
+- cmd 2 (cluster), 3, 4 are spawned as plain enemies (their extra fields are unknown); vx = vy = 0 enemies drift left at 0.7 px/frame; scenery speed per layer is a guess.
+- **Boss attack patterns are designed, not decoded** (`BOSS_PATTERNS` in sim.js): the exe's boss AI was not reverse-engineered, so each guardian gets phases by remaining hp
+  (fan / ring / spiral volleys) on top of its parts' normal guns. hp scaling per difficulty follows the exe; the default setting (NORMAL) is a guess.
 - Pickup kinds per bonus code (1 = P, 2 = S, 3 = +1) and all weapon numbers (damage, rates, caps) are tuned by feel, not decoded from SH.EXE.
-- Missing: 2 players, music (MIDI exported by the Python tools but unused), enemy lighting effects, hall of fame, options menu.
+- The synth is oscillator-based General MIDI, so the music sounds like a chip-tune rendition rather than the original sound card (the exe patches GUS/SB instruments).
+- Missing: intro cutscene and pilot dialogs, gamepad/mouse support, key remapping, "Set Graphics" detail levels, console/cheats.

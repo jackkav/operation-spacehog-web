@@ -13,15 +13,15 @@ No converted or re-hosted copies of the game's art or audio are published here.
 ## Controls
 | Key | Action |
 |---|---|
-| Arrows | move (Left/Right + Enter on the title screen to pick a craft) |
-| Space / Ctrl / Z | fire (hold to charge once you own BUILDUP) |
-| C / Shift / Alt | activate the highlighted upgrade on the toolbar |
-| X | your craft's special weapon |
+| Player 1 | arrows move, Space / Ctrl / Z fire (hold to charge once you own BUILDUP), C / Shift / Alt activate the highlighted upgrade, X craft special |
+| Player 2 | W A S D move, H fire, J activate upgrade, K craft special |
+| Menus | arrows + Enter (Left/Right on the title switches 1 / 2 players) |
+| P / Esc | pause (Q then quits to the menu) |
 
 Shoot down whole waves to earn power tokens, move the toolbar cursor along SPEED → ADD-ON and activate what you want.
 
 ## Status
-Playable end to end (6 levels, guardian fights, pickups, the full upgrade bar, three craft with specials). Still missing: two players, music.
+Playable end to end: 6 levels, guardian fights with attack patterns, pickups, the full upgrade bar, three craft with specials, two-player co-op, the original music (via a built-in MIDI synth), hall of fame, options and credits. Boss attack patterns are my own design (the original's are not decoded). Still missing: intro cutscene, gamepad/mouse, key remapping.
 Several behaviours are approximations of the original; see [NOTES.md](NOTES.md) for the reverse-engineered formats and a list of what is guessed.
 
 ## Development
