@@ -118,6 +118,13 @@ python3 -m http.server 8765 -d web          # then open http://localhost:8765
 ```
 `web/spacehog.zip` is the author's unmodified `spacehog.zip` (SHA-256 a620d38f6e75e8e85baa41f5b5693423e14f3b5d6013aeb0323989ef63f7398d).
 
+Touch (`touch.js` + `main.js`): landscape-first. The canvas is the biggest 4:3 box that fits (crisp integer scale when it nearly fits, otherwise rendered at a higher integer multiple and downsampled
+smoothly); buttons live in the side margins. Drag-anywhere is *relative*: the finger's landing point is the origin and the ship chases a target moved by the finger offset (x1.4) at its own speed limit,
+so SPEED upgrades still matter; the origin slides when the target hits a wall so reversing is immediate. One finger drives movement, others use buttons. Auto-fire pulses the gun (3 frames on / 3 off)
+while the last input was touch; holding FIRE fires continuously (needed to charge BUILDUP). Menus are tappable with the mouse too. The game pauses when hidden, unfocused or held upright (rotate prompt).
+Name entry uses a hidden input so the phone keyboard appears. URL switches: `?touch=1` forces touch UI, `?mute=1` disables all audio (used in automated checks).
+Not done for mobile: installable PWA / offline cache, 2-player on touch (touch drives player 1 only), haptics, gamepad.
+
 Controls - P1: arrows move, Space/Ctrl/Z fire (hold to charge with BUILDUP), C/Shift/Alt activate the highlighted upgrade, X craft special.
 P2: WASD move, H fire, J upgrade, K special. P / Esc pause (Q quits to the menu). Menus: arrows + Enter.
 

@@ -78,3 +78,22 @@ test('stationary (vx = vy = 0) enemies drift with the scroll so they cannot bloc
   assert.ok(Math.abs(sim.enemies[0].x - (x0 - 10 * SCROLL_DRIFT)) < 1e-9);
   run(sim, 800); assert.equal(sim.state, 'won');
 });
+
+test('touch target movement: closes on the target at the ship speed per axis, stops there, stays in bounds, and speed upgrades help', () => {
+  const sim = mk([ev({ t: 99, cmd_id: 9 })]); start(sim); const p = sim.player; p.x = 100; p.y = 100;
+  const speed = sim.ship.speed;
+  sim.step({ tx: 200, ty: 100 }); assert.equal(p.x, 100 + speed); assert.equal(p.y, 100);
+  sim.step({ tx: 200, ty: 130 }); assert.equal(p.y, 100 + speed, 'vertical limited too');
+  run(sim, 200, { tx: 150, ty: 60 }); assert.deepEqual([p.x, p.y], [150, 60], 'lands exactly on the target and stays');
+  run(sim, 400, { tx: -50, ty: 999 }); assert.equal(p.x, p.w / 2); assert.equal(p.y, 229 - p.h / 2);
+  const fast = mk([ev({ t: 99, cmd_id: 9 })]); start(fast); fast.player.x = 100; fast.player.y = 100; fast.player.wep.SPEED = 3;
+  fast.step({ tx: 300, ty: 100 }); assert.ok(fast.player.x - 100 > speed, 'SPEED upgrade raises the cap');
+  sim.player.x = 50; sim.step({ tx: undefined, left: true }); assert.equal(p.x, 50 - speed, 'no target: keys still work');
+});
+
+test('two players can use targets and keys at once', () => {
+  const sim = mk([ev({ t: 99, cmd_id: 9 })]); sim.newGame(0, 1); sim.begin();
+  const [a, b] = sim.players; a.x = 100; a.y = 100; b.x = 100; b.y = 150;
+  sim.step([{ tx: 160, ty: 100 }, { right: true }]);
+  assert.equal(a.x, 100 + a.ship.speed); assert.equal(b.x, 100 + b.ship.speed);
+});

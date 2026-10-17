@@ -2,12 +2,23 @@ import { Sim, SHIPS, SLOTS, W, H, PLAY_H, CHARGE_MIN, DIFFICULTIES } from './sim
 import { loadGame } from './loader.js';
 import { MidiPlayer, parseSMF } from './midi.js';
 import { loadOptions, saveOptions, loadHall, saveHall, qualifies, addScore, parseCredits, MAX_NAME } from './extras.js';
+import { createDrag, dragStart, dragMove, dragEnd, fitCanvas, toLogical, menuTap, TITLE_Y, OPT_ROWS, OPT_Y, craftX } from './touch.js';
 
 const FPS = 60;                       // assumed: 320x240 VGA mode runs at 60 Hz (original frame limiter not decoded)
 const SFX_GAIN = 0.35;                // sound-effect gain at volume 10; the default volume 2 gives 0.07 (20% of the original 0.35)
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = false;
+const body = document.body;
+let cssScale = 1;                      // CSS pixels per game pixel (for converting finger movement)
+function fit() {                       // biggest 4:3 box that fits; crisp integer scale when possible, else a higher backing resolution downsampled smoothly
+  const f = fitCanvas(innerWidth, innerHeight, devicePixelRatio || 1);
+  canvas.width = W * f.backing; canvas.height = H * f.backing;                 // (resizing resets the context state)
+  canvas.style.width = f.cssW + 'px'; canvas.style.height = f.cssH + 'px'; canvas.style.imageRendering = f.crisp ? 'pixelated' : 'auto';
+  ctx.setTransform(f.backing, 0, 0, f.backing, 0, 0); ctx.imageSmoothingEnabled = false;
+  cssScale = f.cssW / W;
+  body.classList.toggle('portrait', innerHeight > innerWidth * 1.05);
+}
+fit(); addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 150));
 
 // --- boot: unpack the original game files ------------------------------------------------------------------------
 ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
@@ -36,8 +47,10 @@ let ac = null, midiOut = null, player = null; const buffers = {};
 // songs differ ~5x in loudness (measured by rendering them offline); these factors even them out to the same RMS
 const SONG_GAIN = { MIDI_BOSS: 0.8, MIDI_INTRO: 4, MIDI_LEVEL: 2.2, MIDI_TITLE: 1.2 };
 function applyAudioLevels() { if (midiOut) midiOut.gain.value = opts.music ? opts.musicVol / 10 : 0; }
+const MUTED = /[?&](mute|nosound)\b/.test(location.search);    // ?mute=1 (testing): never create an audio context, so nothing is played
 function initAudio() {
-  if (ac) return;
+  if (MUTED) return;
+  if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
   ac = new AudioContext();
   for (const [n, s] of game.samples) { const b = ac.createBuffer(1, s.samples.length, s.freq); b.copyToChannel(s.samples, 0); buffers[n] = b; }
   midiOut = ac.createGain(); midiOut.connect(ac.destination);
@@ -63,22 +76,81 @@ function syncMusic() {
 
 // --- input ------------------------------------------------------------------------------------------------------
 const keys = new Set(), pressed = new Set(); let typed = [];
+const nameInput = document.getElementById('nameInput');
 const BLOCK = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'ControlLeft', 'AltLeft', 'AltRight', 'Tab']);
+let touchMode = matchMedia('(pointer: coarse)').matches || /[?&]touch\b/.test(location.search);   // also switched on by the first finger
+let lastTouch = touchMode;                                                                        // last input came from a finger (enables autofire)
 addEventListener('keydown', (e) => {
+  if (e.target === nameInput && e.key !== 'Enter') return;                                        // the name field types for itself
+  lastTouch = false;
   if (BLOCK.has(e.code)) e.preventDefault();
   if (!keys.has(e.code)) pressed.add(e.code);
   if (e.key.length === 1 || e.key === 'Backspace') typed.push(e.key);
   keys.add(e.code); initAudio();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
 const any = (...c) => c.some((k) => keys.has(k));
-const p1Input = () => ({
-  left: keys.has('ArrowLeft'), right: keys.has('ArrowRight'), up: keys.has('ArrowUp'), down: keys.has('ArrowDown'),
-  fire: any('ControlLeft', 'ControlRight', 'Space', 'KeyZ'), select: any('KeyC', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight'), special: keys.has('KeyX'),
-});
+const touchHeld = { fire: false, select: false, special: false };                                // on-screen buttons
+const drag = createDrag();                                                                        // drag-anywhere movement (one finger)
+const p1Input = () => {
+  const i = {
+    left: keys.has('ArrowLeft'), right: keys.has('ArrowRight'), up: keys.has('ArrowUp'), down: keys.has('ArrowDown'),
+    // touch autofire pulses the gun (3 frames on, 3 off); holding FIRE fires continuously, which also charges the BUILDUP beam
+    fire: any('ControlLeft', 'ControlRight', 'Space', 'KeyZ') || touchHeld.fire || (lastTouch && opts.autofire && tick % 6 < 3),
+    select: any('KeyC', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight') || touchHeld.select, special: keys.has('KeyX') || touchHeld.special,
+  };
+  if (drag.id !== null) { i.tx = drag.tx; i.ty = drag.ty; }                                       // ship flies towards the drag target
+  return i;
+};
 const p2Input = () => ({ left: keys.has('KeyA'), right: keys.has('KeyD'), up: keys.has('KeyW'), down: keys.has('KeyS'), fire: keys.has('KeyH'), select: keys.has('KeyJ'), special: keys.has('KeyK') });
 const hit = (...c) => c.some((k) => pressed.has(k));
+
+for (const [id, k] of [['b-fire', 'fire'], ['b-select', 'select'], ['b-special', 'special']]) {
+  const el = document.getElementById(id);
+  const set = (v) => (e) => { e.preventDefault(); touchHeld[k] = v; el.classList.toggle('down', v); if (v) { lastTouch = true; touchMode = true; initAudio(); } };
+  el.addEventListener('pointerdown', (e) => { try { el.setPointerCapture(e.pointerId); } catch { /* synthetic pointer: nothing to capture */ } set(true)(e); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, set(false));
+}
+document.getElementById('b-pause').addEventListener('pointerdown', (e) => { e.preventDefault(); pressed.add('KeyP'); initAudio(); });
+
+addEventListener('pointerdown', (e) => {
+  initAudio();
+  if (e.pointerType === 'touch' || e.pointerType === 'pen') { touchMode = true; lastTouch = true; }
+  if (e.target.closest && e.target.closest('.btn, #fs, #nameInput')) return;                      // buttons handle themselves
+  const playing = ui.screen === 'game' && sim.state === 'playing' && !ui.paused;
+  if (playing) {                                                                                  // drag anywhere: the finger's landing point is the origin
+    const p = sim.players[0];
+    if (touchMode && dragStart(drag, e.pointerId, e.clientX, e.clientY, p.x, p.y)) document.getElementById('hint').classList.add('gone');
+    return;
+  }
+  const [lx, ly] = toLogical(e.clientX, e.clientY, canvas.getBoundingClientRect());              // otherwise it is a menu tap (mouse clicks work too)
+  const a = menuTap(ui.screen, lx, ly, { craft: ui.craft[0], state: sim.state, paused: ui.paused });
+  if (!a) return;
+  if (a.cursor !== undefined) ui.cursor = a.cursor;
+  if (a.optCursor !== undefined) ui.optCursor = a.optCursor;
+  if (a.craft !== undefined) ui.craft[0] = a.craft;
+  for (const k of a.keys) pressed.add(k);
+  if (a.focusName || ui.screen === 'name') nameInput.focus();
+});
+addEventListener('pointermove', (e) => {
+  const p = sim.players[0];
+  dragMove(drag, e.pointerId, e.clientX, e.clientY, cssScale, { minX: p.w / 2, maxX: W - p.w / 2, minY: p.h / 2, maxY: PLAY_H - p.h / 2 });
+});
+for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, (e) => dragEnd(drag, e.pointerId));
+
+nameInput.addEventListener('input', () => { nameInput.value = nameInput.value.replace(/[^\w .'-]/g, '').slice(0, MAX_NAME); ui.name = nameInput.value; });
+
+// pause when the page is hidden, the window loses focus, or the phone is held upright
+const autoPause = () => { keys.clear(); touchHeld.fire = touchHeld.select = touchHeld.special = false; drag.id = null; if (ui.screen === 'game' && sim.state === 'playing') ui.paused = true; };
+document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); });
+addEventListener('blur', autoPause);
+
+const fsBtn = document.getElementById('fs');
+if (!document.documentElement.requestFullscreen) fsBtn.remove();                                  // e.g. iPhone Safari
+else {
+  fsBtn.addEventListener('click', async () => { try { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); await screen.orientation?.lock?.('landscape'); } catch { /* optional */ } });
+  document.addEventListener('fullscreenchange', () => { body.classList.toggle('fullscreen', !!document.fullscreenElement); fit(); });
+}
 
 // --- game + ui state ---------------------------------------------------------------------------------------------
 const sim = new Sim(data);
@@ -103,6 +175,7 @@ const light = (x, y, size, color, alpha = 0.6) => { ctx.globalAlpha = alpha; ctx
 const text = (s, x, y, color = '#ddd', align = 'left', px = 8) => {
   ctx.font = px + 'px monospace'; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, y);
 };
+const backArrow = () => { if (touchMode) text('< BACK', 5, 14, '#9ac'); };                // tap target: top-left corner
 const drawC = (name, x, y, f = 0) => {                              // sprites are anchored at their centre
   const s = data.sprites[sim.spriteIndex.get(name) + f] ?? data.sprites[sim.spriteIndex.get(name)];
   const im = img[s.name]; if (im) ctx.drawImage(im, Math.round(x - s.w / 2), Math.round(y - s.h / 2));
@@ -130,13 +203,18 @@ function drawTitle() {
   starfield(tick);
   drawC('TITLE', W / 2, 52);
   MENU.forEach((label, i) => {
-    const y = 108 + i * 18, sel = ui.cursor === i;
+    const y = TITLE_Y(i), sel = ui.cursor === i;
     const s = i === 0 ? ui.players + ' PLAYER GAME' : label;
     text((sel ? '> ' : '  ') + s + (sel ? ' <' : '  '), W / 2, y, sel ? '#fff' : '#789', 'center', 10);
   });
-  text('UP/DOWN + ENTER.  LEFT/RIGHT CHANGES 1/2 PLAYERS', W / 2, 206, '#9ac', 'center');
-  text('P1: ARROWS  SPACE FIRE  C UPGRADE  X SPECIAL', W / 2, 218, '#678', 'center');
-  text('P2: WASD  H FIRE  J UPGRADE  K SPECIAL', W / 2, 228, '#678', 'center');
+  if (touchMode) {
+    text('TAP A ROW.  TAP THE LEFT / RIGHT SIDE OF "PLAYERS"', W / 2, 206, '#9ac', 'center');
+    text('TO SWITCH 1 / 2 PLAYERS (TOUCH CONTROLS PLAYER 1)', W / 2, 218, '#678', 'center');
+  } else {
+    text('UP/DOWN + ENTER.  LEFT/RIGHT CHANGES 1/2 PLAYERS', W / 2, 206, '#9ac', 'center');
+    text('P1: ARROWS  SPACE FIRE  C UPGRADE  X SPECIAL', W / 2, 218, '#678', 'center');
+    text('P2: WASD  H FIRE  J UPGRADE  K SPECIAL', W / 2, 228, '#678', 'center');
+  }
 }
 
 function drawCraft() {
@@ -144,31 +222,34 @@ function drawCraft() {
   text('CHOOSE YOUR CRAFT', W / 2, 40, '#fc4', 'center', 10);
   const n = ui.players;
   SHIPS.forEach((s, i) => {
-    const x = 60 + i * 100;
+    const x = craftX(i);
     drawC(s.sprite, x, 110);
     text(s.name, x, 135, '#ccd', 'center');
     text(s.special, x, 146, '#789', 'center');
   });
   for (let p = 0; p < n; p++) {
-    const x = 60 + ui.craft[p] * 100;
+    const x = craftX(ui.craft[p]);
     text(ui.locked[p] ? 'P' + (p + 1) + ' READY' : 'P' + (p + 1) + ' ^', x, 160 + p * 12, COLORS[p], 'center');
   }
-  text(n === 1 ? 'LEFT/RIGHT, ENTER TO FLY' : 'P1: LEFT/RIGHT + ENTER    P2: A/D + H', W / 2, 205, '#9ac', 'center');
-  text('ESC: BACK', W / 2, 220, '#678', 'center');
+  text(touchMode ? 'TAP A CRAFT, TAP IT AGAIN TO FLY' : n === 1 ? 'LEFT/RIGHT, ENTER TO FLY' : 'P1: LEFT/RIGHT + ENTER    P2: A/D + H', W / 2, 205, '#9ac', 'center');
+  if (!touchMode) text('ESC: BACK', W / 2, 220, '#678', 'center');
+  backArrow();
 }
 
-const OPT_ROWS = ['MUSIC', 'MUSIC VOL', 'SFX VOL', 'LEVEL', 'LIGHTING', 'MAIN MENU'];
 const optValue = (i) => [opts.music ? 'ON' : 'OFF', '#'.repeat(opts.musicVol) + '.'.repeat(10 - opts.musicVol), '#'.repeat(opts.sfxVol) + '.'.repeat(10 - opts.sfxVol),
-  DIFFICULTIES[opts.difficulty - 1], opts.lighting ? 'ON' : 'OFF', ''][i];
+  DIFFICULTIES[opts.difficulty - 1], opts.lighting ? 'ON' : 'OFF', opts.autofire ? 'ON' : 'OFF', ''][i];
 function drawOptions() {
   starfield(tick);
   text('OPTIONS', W / 2, 40, '#fc4', 'center', 12);
   OPT_ROWS.forEach((label, i) => {
-    const y = 80 + i * 20, sel = ui.optCursor === i;
-    text(label, 70, y, sel ? '#fff' : '#789'); text(optValue(i), 180, y, sel ? '#fd3' : '#9ab');
+    const y = OPT_Y(i), sel = ui.optCursor === i;
+    text(label, 60, y, sel ? '#fff' : '#789');
+    const v = optValue(i);
+    if (v) text(sel ? '< ' + v + ' >' : v, 172, y, sel ? '#fd3' : '#9ab');
   });
   if (opts.difficulty <= 2) text('PRACTICE AND EASY HOLD ONLY 3 LEVELS.', W / 2, 205, '#f96', 'center');
-  text('UP/DOWN SELECT   LEFT/RIGHT CHANGE   ESC BACK', W / 2, 222, '#9ac', 'center');
+  text(touchMode ? 'TAP A ROW. TAP < OR > TO CHANGE.  AUTO FIRE: TOUCH ONLY' : 'UP/DOWN SELECT   LEFT/RIGHT CHANGE   ESC BACK', W / 2, 222, '#9ac', 'center');
+  backArrow();
 }
 
 function drawHall() {
@@ -179,7 +260,7 @@ function drawHall() {
     text(String(i + 1).padStart(2, ' ') + '.', 40, y, c); text(e.name, 66, y, c); text(String(e.score).padStart(8, ' '), 276, y, c, 'right');
     const s = SHIPS[e.ship]; if (s && img[s.sprite]) ctx.drawImage(img[s.sprite], 282, y - 9);
   });
-  text('ENTER / ESC: BACK', W / 2, 228, '#9ac', 'center');
+  text(touchMode ? 'TAP TO GO BACK' : 'ENTER / ESC: BACK', W / 2, 228, '#9ac', 'center');
 }
 
 function drawCredits() {
@@ -196,7 +277,8 @@ function drawCredits() {
     y += l.spans.length ? px + 4 : 8;
   }
   if (y < -10) ui.screen = 'title';
-  text('ESC: BACK', W - 6, H - 4, '#567', 'right');
+  if (!touchMode) text('ESC: BACK', W - 6, H - 4, '#567', 'right');
+  backArrow();
 }
 
 function drawName() {
@@ -206,7 +288,10 @@ function drawName() {
   text('PLAYER ' + (who + 1) + ', ENTER YOUR NAME.', W / 2, 100, '#ddd', 'center', 10);
   text(String(p.score).padStart(8, ' ') + ' POINTS', W / 2, 120, '#fff', 'center', 10);
   text(ui.name + (tick % 40 < 20 ? '_' : ' '), W / 2, 156, COLORS[who] || '#fd3', 'center', 12);
-  text('TYPE, BACKSPACE TO FIX, ENTER TO CONFIRM', W / 2, 206, '#9ac', 'center');
+  if (touchMode) {
+    text('TAP THE SCREEN TO TYPE', W / 2, 172, '#9ac', 'center');
+    ctx.strokeStyle = '#fd3'; ctx.lineWidth = 1; ctx.strokeRect(100.5, 180.5, 119, 18); text('DONE', W / 2, 193, '#fd3', 'center', 10);
+  } else text('TYPE, BACKSPACE TO FIX, ENTER TO CONFIRM', W / 2, 206, '#9ac', 'center');
 }
 
 // --- gameplay screen ---------------------------------------------------------------------------------------------
@@ -235,7 +320,7 @@ function drawGame() {
   if (sim.state === 'briefing') {
     text('LEVEL ' + (sim.levelNo + 1) + ': ' + sim.level.name.toUpperCase(), W / 2, 60, '#fc4', 'center', 10);
     wrapText(sim.level.briefing, 44).forEach((l, i) => text(l, W / 2, 90 + i * 11, '#ddd', 'center'));
-    text('PRESS ENTER', W / 2, 200, '#9ac', 'center');
+    text(touchMode ? 'TAP TO START' : 'PRESS ENTER', W / 2, 200, '#9ac', 'center');
     return;
   }
   wrapLayer('BKG_STARS1', 0.4); wrapLayer('BKG_STARS2', 0.9);
@@ -275,8 +360,8 @@ function drawGame() {
   });
   text('LVL ' + (sim.levelNo + 1), W / 2, 9, '#9ac', 'center');
   const banner = { levelclear: 'LEVEL COMPLETED', gameover: 'GAME OVER', won: 'YOU SAVED EARTH!' }[sim.state];
-  if (banner) { text(banner, W / 2, 110, '#fc4', 'center', 12); text('PRESS ENTER', W / 2, 130, '#9ac', 'center'); }
-  if (ui.paused) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); text('PAUSED', W / 2, 110, '#fff', 'center', 14); text('P / ESC: RESUME    Q: QUIT TO MENU', W / 2, 130, '#9ac', 'center'); }
+  if (banner) { text(banner, W / 2, 110, '#fc4', 'center', 12); text(touchMode ? 'TAP TO CONTINUE' : 'PRESS ENTER', W / 2, 130, '#9ac', 'center'); }
+  if (ui.paused) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); text('PAUSED', W / 2, 110, '#fff', 'center', 14); text(touchMode ? 'TAP TO RESUME' : 'P / ESC: RESUME    Q: QUIT TO MENU', W / 2, 130, '#9ac', 'center'); if (touchMode) text('QUIT TO MENU', W / 2, 154, '#f96', 'center', 10); }
 }
 
 const SCREENS = { title: drawTitle, craft: drawCraft, options: drawOptions, hall: drawHall, credits: drawCredits, name: drawName, game: drawGame };
@@ -294,7 +379,7 @@ function finishGame() {                                              // after ga
   ui.newRank = -1; nextNameOrHall();
 }
 function nextNameOrHall() {
-  if (ui.nameQueue.length) { ui.screen = 'name'; ui.name = ''; typed = []; }
+  if (ui.nameQueue.length) { ui.screen = 'name'; ui.name = ''; typed = []; nameInput.value = ''; if (touchMode) nameInput.focus(); }
   else ui.screen = ui.newRank >= 0 ? 'hall' : 'title';
 }
 
@@ -332,7 +417,8 @@ function handleKeys() {
         else if (c === 2) { opts.sfxVol = Math.min(10, Math.max(0, opts.sfxVol + d)); play('SND_FIRE1'); }
         else if (c === 3) opts.difficulty = Math.min(6, Math.max(1, opts.difficulty + d));
         else if (c === 4) opts.lighting = !opts.lighting;
-        else if (c === 5 && enter) ui.screen = 'title';
+        else if (c === 5) opts.autofire = !opts.autofire;
+        else if (c === 6 && enter) ui.screen = 'title';
         saveOpts(); syncMusic();
       }
       break;
@@ -345,7 +431,7 @@ function handleKeys() {
       if (enter) {
         const who = ui.nameQueue.shift(), p = sim.players[who];
         const r = addScore(hall, { name: ui.name || 'PILOT', score: p.score, ship: SHIPS.indexOf(p.ship) });
-        hall = r.hall; saveHall(store, hall); ui.newRank = r.rank;
+        hall = r.hall; saveHall(store, hall); ui.newRank = r.rank; nameInput.blur();
         nextNameOrHall();
       }
       break;
@@ -368,6 +454,9 @@ let last = performance.now(), acc = 0;
 function frame(now) {
   acc += Math.min(100, now - last); last = now;
   handleKeys();
+  if (touchMode && body.classList.contains('portrait')) autoPause();
+  const playing = ui.screen === 'game' && sim.state === 'playing' && !ui.paused;
+  body.classList.toggle('touch', touchMode); body.classList.toggle('play', playing); body.classList.toggle('menu', !playing);
   while (acc >= 1000 / FPS) {
     tick++;
     if (ui.screen === 'credits') ui.credY -= 0.45;
@@ -380,5 +469,5 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-window.__sim = sim; window.__ui = ui;     // handy for debugging in the console
+window.__sim = sim; window.__ui = ui; window.__touch = { held: touchHeld, drag };     // handy for debugging in the console
 window.__music = () => ({ ctx: ac && ac.state, song: player && player.name, voices: player ? player.synth.voices.length : 0, gain: midiOut && midiOut.gain.value });

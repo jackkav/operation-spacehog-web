@@ -10,9 +10,9 @@ const fakeStore = (init = {}) => { const m = { ...init }; return { getItem: (k) 
 
 test('options round-trip, and junk or out-of-range values fall back to safe ones', () => {
   const s = fakeStore(); assert.deepEqual(loadOptions(s), DEFAULT_OPTIONS);
-  saveOptions(s, { music: false, musicVol: 9, sfxVol: 0, difficulty: 5, lighting: false });
-  assert.deepEqual(loadOptions(s), { music: false, musicVol: 9, sfxVol: 0, difficulty: 5, lighting: false });
-  saveOptions(s, { music: 'yes', musicVol: 99, sfxVol: -4, difficulty: 0, lighting: 1 });
+  saveOptions(s, { music: false, musicVol: 9, sfxVol: 0, difficulty: 5, lighting: false, autofire: false });
+  assert.deepEqual(loadOptions(s), { music: false, musicVol: 9, sfxVol: 0, difficulty: 5, lighting: false, autofire: false });
+  saveOptions(s, { music: 'yes', musicVol: 99, sfxVol: -4, difficulty: 0, lighting: 1, autofire: 'no' });
   assert.deepEqual(loadOptions(s), { ...DEFAULT_OPTIONS, musicVol: 10, sfxVol: 0, difficulty: 1 });
   assert.deepEqual(loadOptions(fakeStore({ 'spacehog.options.v1': '{not json' })), DEFAULT_OPTIONS);
 });

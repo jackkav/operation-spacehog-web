@@ -2,7 +2,7 @@
 // Storage is any object with getItem/setItem (localStorage in the browser); every access is guarded because storage can be
 // missing or blocked (private windows) and must never break the game.
 
-export const DEFAULT_OPTIONS = { music: true, musicVol: 4, sfxVol: 2, difficulty: 3, lighting: true };   // difficulty: 1..6 = PRACTICE..INSANE
+export const DEFAULT_OPTIONS = { music: true, musicVol: 4, sfxVol: 2, difficulty: 3, lighting: true, autofire: true };   // autofire: touch screens only   // difficulty: 1..6 = PRACTICE..INSANE
 export const HALL_SIZE = 10;
 export const MAX_NAME = 14;
 const OPT_KEY = 'spacehog.options.v1', HALL_KEY = 'spacehog.hall.v1';
@@ -15,6 +15,7 @@ export function sanitizeOptions(o) {
     music: typeof o.music === 'boolean' ? o.music : d.music,
     musicVol: clampInt(o.musicVol, 0, 10, d.musicVol), sfxVol: clampInt(o.sfxVol, 0, 10, d.sfxVol),
     difficulty: clampInt(o.difficulty, 1, 6, d.difficulty), lighting: typeof o.lighting === 'boolean' ? o.lighting : d.lighting,
+    autofire: typeof o.autofire === 'boolean' ? o.autofire : d.autofire,
   };
 }
 

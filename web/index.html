@@ -2,16 +2,59 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
 <title>Operation Spacehog (web port)</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #111; }
-  body { display: flex; align-items: center; justify-content: center; }
-  canvas { width: min(100vw, 133.33vh); aspect-ratio: 4 / 3; image-rendering: pixelated; background: #000; }
+  :root { color-scheme: dark; }
+  html, body { margin: 0; width: 100%; height: 100%; height: 100dvh; background: #000; overflow: hidden; overscroll-behavior: none;
+    touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  body { display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+  canvas { display: block; background: #000; touch-action: none; image-rendering: pixelated; }
+
+  /* on-screen controls: only shown in touch mode, while playing; semi-transparent so they can overlay the game on 4:3 screens */
+  #touch { position: fixed; inset: 0; pointer-events: none; display: none; }
+  body.touch.play #touch { display: block; }
+  .btn { position: absolute; pointer-events: auto; touch-action: none; display: flex; align-items: center; justify-content: center;
+    border: 2px solid rgba(255,255,255,.55); background: rgba(40,60,90,.35); color: rgba(255,255,255,.9); border-radius: 50%;
+    font: 700 12px/1 system-ui, sans-serif; letter-spacing: .5px; text-align: center; backdrop-filter: blur(2px); }
+  .btn.down { background: rgba(255,200,60,.55); border-color: #fc4; }
+  #b-fire { right: calc(env(safe-area-inset-right) + 3vmin); bottom: calc(env(safe-area-inset-bottom) + 4vmin); width: max(84px, 24vmin); height: max(84px, 24vmin); font-size: 15px; }
+  #b-special { right: calc(env(safe-area-inset-right) + 3vmin + max(84px, 24vmin) + 2vmin); bottom: calc(env(safe-area-inset-bottom) + 4vmin); width: max(58px, 15vmin); height: max(58px, 15vmin); }
+  #b-select { right: calc(env(safe-area-inset-right) + 3vmin + max(84px, 24vmin) * .35); bottom: calc(env(safe-area-inset-bottom) + 4vmin + max(84px, 24vmin) + 2vmin); width: max(58px, 15vmin); height: max(58px, 15vmin); }
+  #b-pause { right: calc(env(safe-area-inset-right) + 2vmin); top: calc(env(safe-area-inset-top) + 2vmin); width: max(40px, 9vmin); height: max(40px, 9vmin); font-size: 14px; }
+  .hint { position: absolute; left: calc(env(safe-area-inset-left) + 4vmin); bottom: calc(env(safe-area-inset-bottom) + 4vmin); color: rgba(255,255,255,.35);
+    font: 12px/1.3 system-ui, sans-serif; pointer-events: none; transition: opacity 1s; }
+  .hint.gone { opacity: 0; }
+
+  #fs { position: fixed; right: calc(env(safe-area-inset-right) + 8px); top: calc(env(safe-area-inset-top) + 8px); width: 40px; height: 40px; display: none;
+    border: 1px solid rgba(255,255,255,.4); background: rgba(0,0,0,.4); color: #fff; border-radius: 8px; font-size: 20px; touch-action: manipulation; }
+  body.touch.menu #fs { display: block; }
+  body.fullscreen #fs { display: none !important; }
+
+  #rotate { position: fixed; inset: 0; background: #000; color: #9ac; display: none; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; font: 16px/1.4 system-ui, sans-serif; text-align: center; z-index: 5; padding: 24px; }
+  #rotate .ico { font-size: 54px; animation: tilt 2s ease-in-out infinite; }
+  @keyframes tilt { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+  body.touch.portrait #rotate { display: flex; }
+
+  #nameInput { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; font-size: 16px; }
 </style>
 </head>
 <body>
 <canvas id="screen" width="320" height="240"></canvas>
+<div id="touch">
+  <div class="hint" id="hint">drag anywhere to fly</div>
+  <div class="btn" id="b-select">UPGRADE</div>
+  <div class="btn" id="b-special">SPECIAL</div>
+  <div class="btn" id="b-fire">FIRE</div>
+  <div class="btn" id="b-pause">&#10074;&#10074;</div>
+</div>
+<button id="fs" aria-label="Full screen">&#9974;</button>
+<div id="rotate"><div class="ico">&#128241;</div><div>Rotate your device to landscape<br><small>Operation Spacehog plays sideways</small></div></div>
+<input id="nameInput" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="14" enterkeyhint="done" aria-label="Pilot name">
 <script type="module" src="main.js"></script>
 </body>
 </html>

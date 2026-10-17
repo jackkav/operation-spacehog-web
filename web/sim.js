@@ -246,8 +246,14 @@ export class Sim {
       return;
     }
     const speed = sh.speed + 0.35 * p.wep.SPEED;
-    p.x = Math.min(W - p.w / 2, Math.max(p.w / 2, p.x + ((inp.right ? 1 : 0) - (inp.left ? 1 : 0)) * speed));
-    p.y = Math.min(PLAY_H - p.h / 2, Math.max(p.h / 2, p.y + ((inp.down ? 1 : 0) - (inp.up ? 1 : 0)) * speed));
+    // keys move by `speed` per axis; a touch drag supplies a target (inp.tx, inp.ty) and the ship closes on it at the same per-axis
+    // limit, so speed upgrades matter on touch screens too
+    let mx = ((inp.right ? 1 : 0) - (inp.left ? 1 : 0)) * speed, my = ((inp.down ? 1 : 0) - (inp.up ? 1 : 0)) * speed;
+    if (inp.tx !== undefined && inp.tx !== null) {
+      mx = Math.max(-speed, Math.min(speed, inp.tx - p.x)); my = Math.max(-speed, Math.min(speed, inp.ty - p.y));
+    }
+    p.x = Math.min(W - p.w / 2, Math.max(p.w / 2, p.x + mx));
+    p.y = Math.min(PLAY_H - p.h / 2, Math.max(p.h / 2, p.y + my));
     p.trail.push({ x: p.x, y: p.y }); if (p.trail.length > 60) p.trail.shift();
     if (p.inv > 0) p.inv--;
     if (p.cd > 0) p.cd--;

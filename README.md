@@ -29,6 +29,7 @@ Several behaviours are approximations of the original; see [NOTES.md](NOTES.md) 
 node --test web/*.test.mjs        # needs Node 18+
 python3 -m http.server 8765 -d web
 ```
+URL switches for testing: `?mute=1` (no sound at all), `?touch=1` (force the touch controls on a desktop browser).
 `tools/` holds the Python reverse-engineering tools (UPX unpack, packfile/datafile decoder, level/enemy extraction, and `pseudo.py`, a small decompiler helper) that the JS loader and the game rules were derived from.
 
 ## Credits and rights
