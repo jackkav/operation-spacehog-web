@@ -21,7 +21,7 @@ No converted or re-hosted copies of the game's art or audio are published here.
 Shoot down whole waves to earn power tokens, move the toolbar cursor along SPEED → ADD-ON and activate what you want.
 
 ## Status
-Playable end to end: 6 levels, guardian fights with attack patterns, pickups, the full upgrade bar, three craft with specials, two-player co-op, the original music (via a built-in MIDI synth), hall of fame, options and credits. Boss attack patterns are my own design (the original's are not decoded). Still missing: intro cutscene, gamepad/mouse, key remapping.
+Playable end to end: 6 levels, guardian fights with attack patterns, pickups, the full upgrade bar, three craft with specials, two-player co-op, the original music (via a built-in MIDI synth), hall of fame, options and credits. Guardians behave as in the original (decoded from the executable: they are ordinary enemies with a path and gun parts). Still missing: intro cutscene, gamepad/mouse, key remapping.
 Several behaviours are approximations of the original; see [NOTES.md](NOTES.md) for the reverse-engineered formats and a list of what is guessed.
 
 ## Development
@@ -29,7 +29,7 @@ Several behaviours are approximations of the original; see [NOTES.md](NOTES.md) 
 node --test web/*.test.mjs        # needs Node 18+
 python3 -m http.server 8765 -d web
 ```
-`tools/` holds the Python reverse-engineering tools (UPX unpack, packfile/datafile decoder, level/enemy extraction) that the JS loader was ported from.
+`tools/` holds the Python reverse-engineering tools (UPX unpack, packfile/datafile decoder, level/enemy extraction, and `pseudo.py`, a small decompiler helper) that the JS loader and the game rules were derived from.
 
 ## Credits and rights
 Operation Spacehog © 1998–2000 Johan Peitz / Free Lunch Design (freeware; its readme allows distribution "in its original form").

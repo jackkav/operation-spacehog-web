@@ -1,7 +1,7 @@
 // Run: node --test web/sim.test.mjs      (synthetic data only, no game assets needed)
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FRAMES_PER_TICK, SCROLL_DRIFT, W } from './sim.js';
+import { FRAMES_PER_TICK, SCROLL_DRIFT, END_DELAY, W } from './sim.js';
 
 import { sprites, enemy, ev, mk, start, run } from './testutil.mjs';
 
@@ -11,11 +11,11 @@ test('events fire when the level timer reaches their time (80 frames per tick)',
   run(sim, 1); assert.equal(sim.enemies.length, 1);
 });
 
-test('a plain spawn starts just off the right edge: x = 320 + sprite width + x_offset', () => {
+test('a plain spawn is centred just off the right edge: x = 320 + width / 2 + x_offset', () => {
   const sim = mk([ev({ x_offset: 7 }), ev({ t: 1, cmd_id: 9 })]); start(sim);
   const e = sim.enemies[0];
-  assert.equal(e.x, W + 20 + 7); assert.equal(e.y, 100);
-  run(sim, 5); assert.equal(sim.enemies[0].x, W + 27 - 5);          // vx = -1
+  assert.equal(e.x, W + 10 + 7); assert.equal(e.y, 100);
+  run(sim, 5); assert.equal(sim.enemies[0].x, W + 17 - 5);          // vx = -1
 });
 
 test('formation emitter spawns `count` ships `interval` frames apart and ships follow the path one point per frame', () => {
@@ -51,11 +51,11 @@ test('touching an enemy costs a life, then invulnerability; no lives left -> gam
   run(sim, 120); assert.equal(sim.state, 'gameover');
 });
 
-test('level completes once the script has ended and the screen is clear; last level -> won', () => {
-  const sim = mk([ev({ x_offset: -300 }), ev({ t: 1, cmd_id: 9 })]); start(sim);
-  sim.enemies[0].x = 5; sim.enemies[0].vx = 0;
-  run(sim, FRAMES_PER_TICK + 5); assert.equal(sim.state, 'playing', 'enemy still alive');
-  sim.enemies.length = 0; run(sim, 2); assert.equal(sim.state, 'won');
+test('the first end marker ends the level after a short delay, even with enemies still on screen; the last level -> won', () => {
+  const sim = mk([ev({ x_offset: -300 }), ev({ t: 1, cmd_id: 9 }), ev({ t: 2, cmd_id: 0, type: 0 })]); start(sim);
+  sim.enemies[0].x = 5; sim.enemies[0].vx = 0;                                 // an enemy lingers on screen
+  run(sim, FRAMES_PER_TICK); assert.equal(sim.finishedFlag, true); assert.equal(sim.state, 'playing', 'still in the exit delay');
+  run(sim, END_DELAY + 2); assert.equal(sim.state, 'won');
 });
 
 test('ship stays inside the play field', () => {

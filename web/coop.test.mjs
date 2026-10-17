@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { START_POS, SLOTS } from './sim.js';
 import { enemy, ev, mk, run } from './testutil.mjs';
 
-const ENEMIES = [enemy(0, 3, 4, 100), enemy(1, 5, 9999, 0)];
+const ENEMIES = [enemy(0, 3, 4, 100), enemy(1, 5, 9999, 0, { '0x5c': -1 })];
 const level = (events) => ({ name: 'T', briefing: '', events: [...events, ev({ t: 999, cmd_id: 9 })] });
 const two = (events = [], extra = {}) => {
   const sim = mk([], { enemies: ENEMIES, levels: [level(events)], ...extra });

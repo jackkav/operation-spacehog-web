@@ -241,13 +241,13 @@ function drawGame() {
   wrapLayer('BKG_STARS1', 0.4); wrapLayer('BKG_STARS2', 0.9);
   for (const s of sim.scenery) if (bgImg[s.idx]) ctx.drawImage(bgImg[s.idx], Math.round(s.x - s.w / 2), Math.round(s.y - s.h / 2));
   for (const e of sim.enemies) drawC(sim.sprites[e.def.sprite_index].name, e.x, e.y, e.frame);
-  for (const pk of sim.pickups) drawC(pk.kind === 'S' ? 'SUP000' : pk.kind === '1UP' ? 'ONEUP' : 'PUP' + String(Math.floor(pk.age / 3) % 18).padStart(3, '0'), pk.x, pk.y);
+  for (const pk of sim.pickups) drawC(pk.kind === 'S' ? 'SUP000' : pk.kind === '1UP' ? 'ONEUP' : 'PUP' + String(pk.age % 18).padStart(3, '0'), pk.x, pk.y);
   for (const bm of sim.beams) {                                      // BUILDUP beam: a 320x30 sprite fading out
     const x = Math.round(bm.x), len = Math.max(0, W - x);
     ctx.globalAlpha = 1 - bm.t / 14; ctx.drawImage(img.BUILDUP, 0, 0, len, 30, x, Math.round(bm.own.y - 15), len, 30); ctx.globalAlpha = 1;
   }
   for (const b of sim.bullets) drawC(b.spr, b.x, b.y);
-  for (const b of sim.ebullets) drawC(b.spr, b.x, b.y);
+  for (const b of sim.ebullets) drawC(b.spr, b.x, b.y, Math.floor(b.age / 3) % (b.frames || 1));
   for (const p of sim.players) {
     if (p.out || p.dead > 0 || !(p.inv === 0 || sim.frame % 6 < 3)) continue;
     for (let i = 0; i < p.wep.OPTION; i++) { const o = sim.optionPos(i, p); drawC('OPTION', o.x, o.y); }

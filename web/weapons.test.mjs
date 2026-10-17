@@ -5,7 +5,7 @@ import { SLOTS, BASE_MAX, CHARGE_MIN, W } from './sim.js';
 import { enemy, ev, mk, start, run } from './testutil.mjs';
 
 const named = (e, name) => ({ ...e, name });
-const ENEMIES = [enemy(0, 3, 1, 50), enemy(1, 5, 9999, 0), named(enemy(2, 3, 4, 10), 'Meteor 1'), enemy(3, 3, 6, 70)];
+const ENEMIES = [enemy(0, 3, 1, 50), enemy(1, 5, 9999, 0, { '0x5c': -1 }), named(enemy(2, 3, 4, 10, { '0x5c': 0x43 }), 'Meteor 1'), enemy(3, 3, 6, 70)];   // meteor mask 0x43: immune to gun + side
 const idle = (events = []) => mk([...events, ev({ t: 999, cmd_id: 9 })], { enemies: ENEMIES });
 const field = (sim) => { start(sim); sim.player.inv = 99999; return sim; };
 const pin = (en, x, y) => { en.vx = 0; en.vy = 0; en.x = x; en.y = y; return en; };
@@ -79,7 +79,11 @@ test('meteors shrug off the plain gun but die to magma, missiles and special att
   const rock = spawnAt(sim, 2, 150, 100);
   run(sim, 120, { fire: true }); assert.equal(rock.hp, 4, 'gun does nothing to a meteor');
   sim.w.MAGMA = 1; run(sim, 120, { fire: true }); assert.equal(rock.dead, true);
-  const m2 = spawnAt(sim, 2, 150, 100); sim.w.MAGMA = 0; sim.w.MISSILE = 1; run(sim, 200, { fire: true }); assert.equal(m2.dead, true);
+  const m2 = spawnAt(sim, 2, 150, 100);
+  assert.equal(sim.hurt(m2, 2, 'missile'), true, 'a missile that hits a meteor hurts it');
+  const homing = { x: 100, y: 60, vx: 2, vy: 0 }; sim.enemies = [m2]; sim.steer(homing);
+  assert.equal(homing.vy, 0, 'but missiles never home on meteors (target mask bit 0x40, as in the exe)');
+  assert.equal(sim.hurt(m2, 20, 'special'), true); assert.ok(m2.dead);
   const wall = spawnAt(sim, 1, 150, 100); sim.w.MAGMA = 3; run(sim, 100, { fire: true }); assert.equal(wall.hp, 9999);
 });
 

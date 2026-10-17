@@ -9,28 +9,22 @@ export const SCROLL_DRIFT = 0.7;          // approx: world scroll speed for vx =
 export const SLOTS = ['SPEED', 'GUN', 'SIDE', 'BUILDUP', 'MISSILE', 'PLASMA', 'MAGMA', 'OPTION', 'ADD-ON'];   // toolbar order
 export const BASE_MAX = 3, SPEED_MAX = 5, ADDON_MAX = 3;
 export const CHARGE_MIN = 25;             // frames of holding fire before a release fires the BUILDUP beam
-export const BULLET_SPRITES = ['EB_RANDOM1', 'EB_RANDOM2', 'EB_RANDOM3', 'EB_RANDOM4', 'EB_LEFT'];   // enemy bullet type 0-4
-
-// Guardian attack patterns. approx / designed: the original's boss AI is not decoded, so these are phase-based attacks driven by
-// the boss's remaining health (a phase applies while hp / maxHp >= minHp). `from` is an offset from the boss centre (bosses face
-// left, so their front is -x). kinds: fan = n aimed bullets spread over `spread` rad, ring = n bullets all round (slowly rotating),
-// spiral = one bullet every `every` frames on a rotating arm set.
-export const BOSS_PATTERNS = {
-  Freighter: { phases: [                                    // level 3: slow convoy ship, gets nastier as it is chipped down
-    { minHp: 0.66, attacks: [] },
-    { minHp: 0.33, attacks: [{ kind: 'fan', every: 140, n: 5, spread: 0.7, speed: 2.0, from: [-150, 0], spr: 1 }] },
-    { minHp: 0, attacks: [{ kind: 'fan', every: 110, n: 7, spread: 0.9, speed: 2.2, from: [-150, 0], spr: 1 },
-                          { kind: 'ring', every: 170, n: 12, speed: 1.5, from: [0, 0], spr: 2 }] },
-  ] },
-  hitarea: { phases: [                                      // level 6: Octo (parent is the invisible hit area)
-    { minHp: 0.66, attacks: [{ kind: 'fan', every: 150, n: 3, spread: 0.5, speed: 2.0, from: [20, 14], spr: 3 }] },
-    { minHp: 0.33, attacks: [{ kind: 'fan', every: 110, n: 5, spread: 0.8, speed: 2.2, from: [20, 14], spr: 3 },
-                             { kind: 'ring', every: 200, n: 10, speed: 1.6, from: [20, 14], spr: 2 }] },
-    { minHp: 0, attacks: [{ kind: 'spiral', every: 6, arms: 3, step: 0.35, speed: 1.8, from: [20, 14], spr: 0 },
-                          { kind: 'fan', every: 90, n: 5, spread: 0.9, speed: 2.4, from: [20, 14], spr: 3 }] },
-  ] },
-};
-export const MAX_ENEMY_BULLETS = 160;
+// Enemy bullet templates, from SH.EXE (table at 0xC8598, selected by the enemy's bullet type). Speeds are px per frame:
+// 'aim' = speed 4 towards a random living player, 'random' = speed 2 in a random direction, 'fixed' = constant velocity.
+export const BULLET_TYPES = [
+  { kind: 'aim', speed: 4, spr: 'EB_RANDOM1', frames: 4 },
+  { kind: 'random', speed: 2, spr: 'EB_RANDOM1', frames: 4 },
+  { kind: 'fixed', vx: -10, vy: 0, spr: 'EB_LASER1', frames: 2 },
+  { kind: 'fixed', vx: -6, vy: 0, spr: 'EB_LEFT', frames: 1 },
+  { kind: 'fixed', vx: -8, vy: 0, spr: 'EB_BLUE', frames: 1 },
+];
+// The exe's trig tables: 256 angle steps per turn, amplitude 128 (cos at 0xCC858, sin at 0xCA6F4)
+export const COS = Array.from({ length: 256 }, (_, i) => Math.round(Math.cos(i * 2 * Math.PI / 256) * 128));
+export const SIN = Array.from({ length: 256 }, (_, i) => Math.round(Math.sin(i * 2 * Math.PI / 256) * 128));
+// A weapon's bit in an enemy's immunity mask (def field +0x5C); an enemy is immune to a weapon when the bit is set. 0xFF = immune to everything.
+export const WEAPON_FLAG = { gun: 1, beam: 1, side: 2, magma: 8, missile: 0x20, hell: 0x20, special: 0x10 };
+export const END_DELAY = 90;              // frames between the end-of-script marker and the level-complete screen (approx)
+export const PICKUP_Y = [20, 220];        // pickups are placed inside this y range (exe)
 
 export const DIFFICULTIES = ['PRACTICE', 'EASY', 'NORMAL', 'TOUGH', 'HARD', 'INSANE'];   // names from SH.EXE; setting n+1 = hp multiplier
 export const START_POS = [[40, 115], [40, 85], [40, 145]];                                 // start position, by player count then index
@@ -101,7 +95,7 @@ export class Sim {
   loadLevel(n) {
     this.levelNo = n;
     this.level = this.data.levels[n];
-    this.frame = 0; this.levelTime = 0; this.evIdx = 0; this.finishedFlag = false;
+    this.frame = 0; this.tickFrames = 0; this.levelTime = 0; this.evIdx = 0; this.finishedFlag = false; this.endTimer = 0;
     this.enemies = []; this.bullets = []; this.ebullets = []; this.fx = []; this.scenery = []; this.emitters = [];
     this.pickups = []; this.beams = []; this.groups = new Set(); this.parent = null;
     this.players.forEach((p, i) => {
@@ -135,20 +129,28 @@ export class Sim {
   exec(e) {
     const bonus = e.bonus > 0 && e.bonus < 99 ? e.bonus : 0;          // 99 = "does not count"
     switch (e.cmd_id) {
-      case 0: case 3: case 4: case 6: case 2: {     // approx: cluster / "attached" variants (2, 3, 4) spawn as plain enemies
+      case 0: case 3: case 4: case 6: case 2: {
         const def = this.defs.get(e.type); if (!def) break;
-        const raw = e.raw || [], link = raw[14];                  // link: 0 = becomes the parent of what follows, -2 = attached to it
+        const raw = e.raw || [], link = raw[14];                  // link: 0 = becomes the parent of what follows, -2 = part of it
         const [w] = this.frameSize(def, 0);
         let en;
         if (e.cmd_id === 6) {                                      // guardian: follows GPAT_<f6>, y = f2 + path y, loops until killed
           const path = this.paths['GPAT_' + String(raw[6]).padStart(2, '0')];
-          en = this.spawn(def, path ? path[0].x : W + w, e.y + (path ? path[0].y : 0), 0, 0, path || null);
-          en.boss = true; en.loop = true; en.maxHp = en.hp;
+          en = this.spawn(def, path ? path[0].x : W + w / 2, e.y + (path ? path[0].y : 0), 0, 0, path || null);
+          en.boss = true; en.loop = true; en.step = Math.max(1, raw[4] || 1); en.maxHp = en.hp;
         } else if (link === -2 && this.parent && !this.parent.dead) {   // part of the parent (turrets, engine flames, ...)
           en = this.spawn(def, this.parent.x + raw[12], this.parent.y + raw[13], 0, 0);
           en.parent = this.parent; en.off = [raw[12], raw[13]]; this.parent.children.push(en);
-        } else en = this.spawn(def, W + w + (e.x_offset ?? 0), e.y, e.vx ?? -1, e.vy ?? 0);
-        en.bonus = bonus;                           // dropped when this enemy is shot down
+        } else if (e.cmd_id === 2) {                               // cluster: orbits a moving centre, radius 128 >> f9, f10 = start angle, f11 = turn speed
+          const ang = (raw[10] || 0) & 255, sh = raw[9] || 0;
+          en = this.spawn(def, W + w / 2 + (e.x_offset ?? 0) + (COS[ang] >> sh), e.y + (SIN[ang] >> sh), e.vx ?? -1, e.vy ?? 0);
+          en.orbit = { ang, step: raw[11] || 0, sh };
+        } else {
+          en = this.spawn(def, W + w / 2 + (e.x_offset ?? 0), e.y, e.vx ?? -1, e.vy ?? 0);   // spawn centre = just off the right edge
+          if (e.cmd_id === 3) en.hover = { x: raw[9], t: (raw[13] || 0) * 25, saved: 0 };       // fly in, stop at x < f9 for f13 x 25 frames, fly on
+          if (e.cmd_id === 4) en.dodge = true;                                                 // jerk away when a player's line crosses within 9 px
+        }
+        en.bonus = bonus; en.blocking = e.bonus === 99;           // bonus 1-9 drops a pickup when shot down; 99 = guardian: freezes the level timer while alive
         if (link === 0 || e.cmd_id === 6) this.parent = en;
         break;
       }
@@ -168,7 +170,7 @@ export class Sim {
         this.scenery.push({ idx: e.type, x: W + bg.w / 2 + (e.x_offset ?? 0), y: e.y, w: bg.w, h: bg.h, vx: -speed });
         break;
       }
-      case 9: this.finishedFlag = true; this.evIdx = this.level.events.length; break;   // first end marker stops the script (exe: sets 0xC0530)
+      case 9: this.finishedFlag = true; this.endTimer = END_DELAY; this.evIdx = this.level.events.length; break;   // first end marker ends the script (exe: sets 0xC0530)
     }
   }
 
@@ -183,14 +185,17 @@ export class Sim {
     // decoded; drift them left at the near-scenery speed so they cross the screen and the level can finish
     if (!path && vx === 0 && vy === 0) vx = -SCROLL_DRIFT;
     const f = def.fields;
+    const used = new Set(this.enemies.filter(e => !e.dead).map(e => e.slot));
+    let slot = 0; while (used.has(slot)) slot++;                       // the exe uses the lowest free of 50 slots
+    const reload = f['0x50'] || 0;
     const en = {
-      def, x, y, vx, vy, w, h, path, pi: 0, baseY: y, hp: Math.round(def.hp * this.hpMul()), frame: 0, age: 0, group, bonus: 0,
+      def, x, y, vx, vy, w, h, path, pi: 0, baseY: y, hp: Math.round(def.hp * this.hpMul()), frame: 0, age: 0, group, bonus: 0, slot,
       frames: (f['0x28'] || 0) + 1,
-      reload: (f['0x50'] || 0) * 2, cd: 30 + Math.floor(this.rand() * 60),
+      reload, fc: reload ? slot % (reload + 1) : 0,                    // fire counter starts at slot % (reload + 1): staggers volleys
       gun: [f['0x48'] || 0, f['0x4c'] || 0], bullet: f['0x58'] || 0,
-      meteor: /^(Meteor|Halfmeteor)/.test(def.name || ''),    // README: meteors only die to magma or missiles
-      decor: /^Engineflame/.test(def.name || ''),             // engine flames: scenery on a parent, not a target
-      children: [], parent: null, boss: false, loop: false,
+      imm: (f['0x5c'] ?? 0) & 0xff,                                    // weapons this enemy is immune to (WEAPON_FLAG bits); 0xFF = all
+      decor: (f['0x74'] || 0) !== 0,                                   // engine flames: drawn, but not a target and harmless
+      children: [], parent: null, boss: false, loop: false, step: 1, blocking: false, orbit: null, hover: null, dodge: false,
     };
     if (group) group.alive++;
     this.enemies.push(en);
@@ -203,7 +208,10 @@ export class Sim {
     if (this.state !== 'playing') return;
     const inps = Array.isArray(inp) ? inp : [inp];
     this.frame++;
-    if (this.frame % FRAMES_PER_TICK === 0) { this.levelTime++; this.runEvents(); }
+    // exe: the script clock only runs while no guardian (bonus 99) is alive; a tick is 80 clock frames
+    if (!this.finishedFlag && !this.enemies.some(e => e.blocking && !e.dead) && ++this.tickFrames % FRAMES_PER_TICK === 0) {
+      this.levelTime++; this.runEvents();
+    }
     this.players.forEach((p, i) => this.updatePlayer(p, inps[i] || {}));
     if (this.players.every(p => p.out)) { this.state = 'gameover'; return; }
     this.updateEmitters();
@@ -218,7 +226,8 @@ export class Sim {
     this.fx = this.fx.filter(f => f.t < f.frames.length * f.speed);
     for (const p of this.players) if (p.berserk > 0) p.berserk--;
     if (this.flash > 0) this.flash--;
-    if (this.finishedFlag && !this.enemies.length && !this.emitters.length && this.players.every(p => p.out || p.dead === 0)) {
+    // exe: the first end marker ends the level at once (the screen need not be clear); the short delay is for the exit sequence
+    if (this.finishedFlag && --this.endTimer <= 0 && this.players.every(p => p.out || p.dead === 0)) {
       this.state = this.levelNo + 1 >= this.data.levels.length ? 'won' : 'levelclear';
     }
   }
@@ -285,7 +294,7 @@ export class Sim {
     const magma = w.MAGMA > 0;
     const spr = magma ? 'MAGMA' + Math.min(4, w.MAGMA) : 'SHOT' + Math.min(6, 1 + w.PLASMA);
     const [bw, bh] = this.size(spr);
-    const dmg = (magma ? 2 + 2 * w.MAGMA : 1 + w.PLASMA) * dmgMul;
+    const dmg = (magma ? 3 * w.MAGMA : 1 + w.PLASMA) * dmgMul;           // exe: gun 1 + plasma level, magma 3 x level
     const n = magma ? 1 + (w.GUN > 1 ? 1 : 0) : 1 + w.GUN;              // GUN adds a fire source
     const spread = magma ? 8 : 4;
     const shot = (x, y) => this.bullets.push({ x, y, w: bw, h: bh, vx: 7, vy: 0, dmg, spr, src: magma ? 'magma' : 'gun', pierce: magma, hit: new Set(), own: p });
@@ -295,13 +304,13 @@ export class Sim {
       const k = Math.min(4, 1 + w.SIDE);
       for (const [name, vy] of [['SIDEUP' + k, -3.2], ['SIDEDOWN' + k, 3.2]]) {
         const [sw, sh2] = this.size(name);
-        this.bullets.push({ x: p.x, y: p.y + vy * 2, w: sw, h: sh2, vx: 1.2, vy, dmg: (1 + w.SIDE) * dmgMul, spr: name, src: 'side', pierce: false, hit: new Set(), own: p });
+        this.bullets.push({ x: p.x, y: p.y + vy * 2, w: sw, h: sh2, vx: 1.2, vy, dmg: w.SIDE * dmgMul, spr: name, src: 'side', pierce: false, hit: new Set(), own: p });
       }
     }
     if (w.MISSILE > 0 && p.missileCd === 0) {
       p.missileCd = 40;
       for (let i = 0; i < w.MISSILE; i++) {
-        this.bullets.push({ x: p.x, y: p.y + (i % 2 ? 6 : -6), w: 8, h: 8, vx: 2 + i * 0.3, vy: i % 2 ? 1.5 : -1.5, dmg: 4 * dmgMul, spr: 'MISSILE', src: 'missile', pierce: false, hit: new Set(), home: true, own: p });
+        this.bullets.push({ x: p.x, y: p.y + (i % 2 ? 6 : -6), w: 8, h: 8, vx: 2 + i * 0.3, vy: i % 2 ? 1.5 : -1.5, dmg: 2 * dmgMul, spr: 'MISSILE', src: 'missile', pierce: false, hit: new Set(), home: true, own: p });
       }
     }
     this.sfx.push('SND_FIRE1');
@@ -326,11 +335,11 @@ export class Sim {
     switch (p.ship.special) {
       case 'BERSERK': p.berserk = 360; break;                              // charged shots that hurt a lot
       case 'HELLRIDERS':                                                   // big heat-seeking missiles
-        for (let i = 0; i < 4; i++) this.bullets.push({ x: p.x, y: p.y + (i - 1.5) * 6, w: 22, h: 22, vx: 2.5, vy: (i - 1.5) * 1.2, dmg: 25, spr: 'BIGMISSILE1', src: 'hell', pierce: false, hit: new Set(), home: true, own: p });
+        for (let i = 0; i < 4; i++) this.bullets.push({ x: p.x, y: p.y + (i - 1.5) * 6, w: 22, h: 22, vx: 2.5, vy: (i - 1.5) * 1.2, dmg: 40, spr: 'BIGMISSILE1', src: 'hell', pierce: false, hit: new Set(), home: true, own: p });
         this.sfx.push('SND_EXP3'); break;
       case 'FIREWORKS':                                                    // lightning: hits everything, wipes enemy bullets
         this.flash = 10; this.ebullets = [];
-        for (const en of this.enemies.slice()) if (en.x < W + 20) this.hurt(en, 12, 'special', p);
+        for (const en of this.enemies.slice()) if (en.x < W + 20) this.hurt(en, 20, 'special', p);
         this.enemies = this.enemies.filter(e => !e.dead);
         this.sfx.push('SND_EXP2'); break;
     }
@@ -354,23 +363,30 @@ export class Sim {
       if (en.parent) {                                  // attached part: rides on its parent
         en.x = en.parent.x + en.off[0]; en.y = en.parent.y + en.off[1];
       } else if (en.path) {
-        let pt = en.path[en.pi++];
-        if (!pt && en.loop) { en.pi = 0; pt = en.path[en.pi++]; }
-        if (!pt) { this.escape(en); continue; }
-        en.x = pt.x; en.y = en.baseY + pt.y;
-      } else { en.x += en.vx; en.y += en.vy; }
-      if (en.frames > 1 && en.age % 6 === 0) en.frame = (en.frame + 1) % en.frames;
-      if (!en.parent && !en.boss && (en.x < -90 || en.x > 700 || en.y < -200 || en.y > 520)) { this.escape(en); continue; }
-      // approx: enemies with a reload value shoot while on screen; bullet types 0-3 are aimed, type 4 flies straight left
-      if (en.reload > 0 && en.x > 24 && en.x < W - 8 && --en.cd <= 0) {
-        en.cd = en.reload;
-        const gx = en.x + en.gun[0], gy = en.y + en.gun[1];
-        const spr = BULLET_SPRITES[Math.min(4, en.bullet)], [bw, bh] = this.size(spr);
-        let vx = -2.5, vy = 0;
-        if (en.bullet < 4) { const t = this.target(gx, gy), dx = t.x - gx, dy = t.y - gy, d = Math.hypot(dx, dy) || 1; vx = dx / d * 2.2; vy = dy / d * 2.2; }
-        this.ebullets.push({ x: gx, y: gy, w: bw, h: bh, vx, vy, spr });
+        let pt = en.path[en.pi];                        // position = path point, then advance (guardians step f4 points a frame, formations 1)
+        if (!pt) { if (en.loop) { en.pi = 0; pt = en.path[0]; } else { this.escape(en); continue; } }
+        en.x = pt.x; en.y = en.baseY + pt.y; en.pi += en.step;
+      } else {
+        en.x += en.vx; en.y += en.vy;
+        if (en.orbit) {                                 // cluster: swap the old orbit offset for the new one around the moving centre
+          const o = en.orbit;
+          en.x -= COS[o.ang] >> o.sh; en.y -= SIN[o.ang] >> o.sh;
+          o.ang = (o.ang + o.step) & 255;
+          en.x += COS[o.ang] >> o.sh; en.y += SIN[o.ang] >> o.sh;
+        }
+        if (en.hover && en.x < en.hover.x && en.hover.t > 0) {   // fly in, hover (vx = 0) for the set time, then carry on
+          const h = en.hover;
+          if (h.saved === 0) h.saved = en.vx;
+          en.vx = h.t === 1 ? h.saved : 0; h.t--;
+        }
+        if (en.dodge) this.dodge(en);
       }
-      if (en.boss) this.bossAI(en);
+      if (en.frames > 1 && en.age % 6 === 0) en.frame = (en.frame + 1) % en.frames;
+      if (!en.parent && !en.boss && !en.path && (en.x < -en.w / 2 || en.x > 700 || en.y < -200 || en.y > 520)) { this.escape(en); continue; }
+      if (en.reload > 0) {                              // exe: counter runs to `reload`, fires, resets next frame (period reload + 1)
+        if (en.reload <= en.fc) en.fc = 0;
+        else if (++en.fc >= en.reload) this.fireEnemy(en);
+      }
       // ramming: big sprites (guardians and their parts) are mostly empty at their edges, so their hit box is shrunk in proportion
       // (the original uses pixel-perfect collision, which we approximate)
       const shrink = Math.min(30, Math.max(4, Math.min(en.w, en.h) * 0.22));
@@ -379,34 +395,29 @@ export class Sim {
     this.enemies = this.enemies.filter(e => !e.dead);
   }
 
-  bossPhase(en) {                      // index of the active phase for the boss's remaining health
-    const ph = (BOSS_PATTERNS[en.def.name] || { phases: [] }).phases, frac = en.hp / en.maxHp;
-    const i = ph.findIndex(p => frac >= p.minHp);
-    return i < 0 ? ph.length - 1 : i;
+  // type 4 enemies: when a player's row passes within 9 px they jerk away vertically (speed 8, decaying by 1 per frame)
+  dodge(en) {
+    if (en.vy > 0) en.vy--; else if (en.vy < 0) en.vy++;
+    for (const p of this.players) {
+      if (!alive(p)) continue;
+      const below = en.y - p.y, above = p.y - en.y;
+      if (below >= 0 && below <= 9 && en.y <= 179) en.vy = 8;
+      if (above >= 0 && above <= 9 && en.y > 60) en.vy = -8;
+    }
   }
 
-  bossAI(en) {
-    const pat = BOSS_PATTERNS[en.def.name]; if (!pat) return;
-    const idx = this.bossPhase(en);
-    if (idx !== en.phase) {                                        // phase change: announce it
-      if (en.phase !== undefined) { this.flash = 4; this.sfx.push('SND_EXP3'); }
-      en.phase = idx;
-    }
-    for (const at of pat.phases[idx].attacks) {
-      if (en.age % at.every !== 0) continue;
-      const ox = en.x + at.from[0], oy = en.y + at.from[1];
-      if (ox < 0 || ox > W + 10 || oy < -10 || oy > H || this.ebullets.length > MAX_ENEMY_BULLETS - 16) continue;   // only when visible
-      const spr = BULLET_SPRITES[at.spr ?? 0], [bw, bh] = this.size(spr);
-      const shoot = (ang) => this.ebullets.push({ x: ox, y: oy, w: bw, h: bh, vx: Math.cos(ang) * at.speed, vy: Math.sin(ang) * at.speed, spr });
-      if (at.kind === 'fan') {
-        const t = this.target(ox, oy), aim = Math.atan2(t.y - oy, t.x - ox);
-        for (let i = 0; i < at.n; i++) shoot(aim + (at.n === 1 ? 0 : (i / (at.n - 1) - 0.5) * at.spread));
-      } else if (at.kind === 'ring') {
-        for (let i = 0; i < at.n; i++) shoot(en.age * 0.05 + (i / at.n) * Math.PI * 2);
-      } else if (at.kind === 'spiral') {
-        for (let i = 0; i < at.arms; i++) shoot(en.age * at.step + (i / at.arms) * Math.PI * 2);
-      }
-    }
+  fireEnemy(en) {                                       // bullet from the gun offset; behaviour comes from the bullet template
+    const t = BULLET_TYPES[Math.min(BULLET_TYPES.length - 1, en.bullet)], [bw, bh] = this.size(t.spr);
+    const x = en.x + en.gun[0], y = en.y + en.gun[1];
+    let vx, vy;
+    if (t.kind === 'aim') {                             // aimed at a random living player; direction quantised to 256 steps like the exe
+      const live = this.players.filter(alive), p = live.length ? live[Math.floor(this.rand() * live.length)] : this.players[0];
+      const a = Math.round(Math.atan2(p.y - y, p.x - x) * 256 / (Math.PI * 2)) & 255;
+      vx = COS[a] >> 5; vy = SIN[a] >> 5;
+    } else if (t.kind === 'random') {
+      const a = Math.floor(this.rand() * 256); vx = COS[a] >> 6; vy = SIN[a] >> 6;
+    } else { vx = t.vx; vy = t.vy; }
+    this.ebullets.push({ x, y, w: bw, h: bh, vx, vy, spr: t.spr, frames: t.frames, age: 0 });
   }
 
   escape(en) {                         // left the field alive: breaks a wave's bonus
@@ -432,7 +443,8 @@ export class Sim {
     this.enemies = this.enemies.filter(e => !e.dead);
     for (const b of this.ebullets) {
       b.x += b.vx; b.y += b.vy;
-      if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) { b.dead = true; continue; }
+      b.age++;
+      if (b.x - b.w / 2 > W || b.x + b.w / 2 < 0 || b.y - b.h / 2 > H || b.y + b.h / 2 < 0) { b.dead = true; continue; }   // exe: off-screen by its own size
       for (const p of this.players) {
         if (!alive(p)) continue;
         for (let i = 0; i < p.wep.OPTION && !b.dead; i++) {          // options absorb enemy fire
@@ -449,7 +461,7 @@ export class Sim {
   steer(b) {                           // heat-seeking: turn towards the nearest enemy that is ahead of the missile
     let best = null, bd = 1e9;
     for (const en of this.enemies) {
-      if (en.dead || en.decor || en.x < b.x - 10 || en.x > W + 10 || en.hp >= 9000) continue;
+      if (en.dead || en.decor || en.x < b.x - 10 || en.x > W + 10 || (en.imm & 0x60) !== 0) continue;   // exe: not enemies flagged 0x40 / missile-immune
       const d = Math.hypot(en.x - b.x, en.y - b.y);
       if (d < bd) { bd = d; best = en; }
     }
@@ -472,26 +484,27 @@ export class Sim {
 
   // damage routing: returns true when the enemy took damage; `own` is the player credited with a kill
   hurt(en, dmg, src, own = this.players[0]) {
-    if (en.dead || en.decor || en.hp >= 9000) return false;          // 9999 hp = indestructible obstacle (Big Meteor)
-    if (en.meteor && (src === 'gun' || src === 'side')) return false;
+    if (en.dead || en.decor) return false;
+    if ((en.imm & (WEAPON_FLAG[src] ?? 0)) !== 0) return false;      // immune to this weapon (0xFF: Big Meteor, Octo's ship, ...)
     en.hp -= dmg;
     if (en.hp <= 0) this.killEnemy(en, own);
     return true;
   }
 
-  killEnemy(en, own = this.players[0]) {
+  // `auto`: a part destroyed along with its parent (the exe leaves such parts in place; we blow them up) scores and drops nothing
+  killEnemy(en, own = this.players[0], auto = false) {
     en.dead = true; en.killed = true;
-    own.score += Math.round((en.def.score || 0) * this.scoreMul());
     this.fx.push({ x: en.x, y: en.y, frames: ['MHIT1', 'MHIT2', 'MHIT3'], speed: 4, t: 0 });
-    this.sfx.push(['SND_EXP1', 'SND_EXP2', 'SND_EXP3'][Math.floor(this.rand() * 3)]);
-    if (en.group) { en.group.alive--; en.group.last = { x: en.x, y: en.y }; }
-    else if (en.bonus) this.drop(en.bonus, en.x, en.y);
-    for (const c of en.children) if (!c.dead) this.killEnemy(c, own);   // a destroyed parent takes its parts with it
-    if (en.boss) {                                                       // guardian down: big explosion
-      this.flash = 8;
-      for (let i = 0; i < 8; i++) this.fx.push({ x: en.x + (this.rand() - 0.5) * en.w, y: en.y + (this.rand() - 0.5) * en.h, frames: ['MHIT1', 'MHIT2', 'MHIT3'], speed: 4, t: -i * 5 });
-      this.sfx.push('SND_EXP3');
-    }
+    for (let i = 0; i < (en.def.fields['0x75'] || 0); i++)           // field +0x75 = extra explosions scattered over a big sprite
+      this.fx.push({ x: en.x + (this.rand() - 0.5) * en.w, y: en.y + (this.rand() - 0.5) * en.h, frames: ['MHIT1', 'MHIT2', 'MHIT3'], speed: 4, t: -(i % 8) * 2 });
+    if (!auto) {
+      this.sfx.push(['SND_EXP1', 'SND_EXP2', 'SND_EXP3'][Math.floor(this.rand() * 3)]);
+      own.score += Math.round((en.def.score || 0) * this.scoreMul());
+      if (en.group) { en.group.alive--; en.group.last = { x: en.x, y: en.y }; }
+      else if (en.bonus) this.drop(en.bonus, en.x, en.y);
+    } else if (en.group) en.group.alive--;
+    for (const c of en.children) if (!c.dead) this.killEnemy(c, own, true);   // parts go with their parent
+    if (en.boss) { this.flash = 8; this.sfx.push('SND_EXP3'); }                // guardian down
   }
 
   bossStatus() {                       // for the energy bar: the live guardian, if any
@@ -508,10 +521,11 @@ export class Sim {
   }
 
   // --- pickups ------------------------------------------------------------------------------------------------
-  drop(bonus, x, y) {                  // approx: bonus 1 = power token (P), 2 = special (S), 3 = extra ship (+1)
+  drop(bonus, x, y) {                  // exe (0xD6D8): kind 1 = power token (P), 2 = special (S), 3 = extra ship (+1); 4-9 do nothing
+    if (bonus < 1 || bonus > 3) return;
     const kind = bonus === 2 ? 'S' : bonus === 3 ? '1UP' : 'P';
     const [w, h] = this.size(kind === 'S' ? 'SUP000' : kind === '1UP' ? 'ONEUP' : 'PUP000');
-    this.pickups.push({ kind, x: Math.min(x, W - 12), y, w, h, vx: -0.5, age: 0 });
+    this.pickups.push({ kind, x: Math.min(x, W - 12), y: Math.min(PICKUP_Y[1], Math.max(PICKUP_Y[0], y)), w, h, vx: -1, age: 0 });
   }
 
   updatePickups() {                    // free to take for whoever reaches it first
